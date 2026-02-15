@@ -7,7 +7,7 @@ import { Cpu, Globe, Zap, Terminal, ArrowRight } from 'lucide-react';
 interface InitStepProps {
   targetUrl: string;
   onUrlChange: (url: string) => void;
-  onNext: () => void;
+  onNext: () => Promise<void> | void;
 }
 
 export function InitStep({ targetUrl, onUrlChange, onNext }: InitStepProps) {
@@ -39,10 +39,11 @@ export function InitStep({ targetUrl, onUrlChange, onNext }: InitStepProps) {
       setLogs(prev => [...prev, log]);
     }
     
-    setTimeout(() => {
+    try {
+      await onNext();
+    } finally {
       setIsLoading(false);
-      onNext();
-    }, 500);
+    }
   };
 
   return (

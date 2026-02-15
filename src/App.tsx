@@ -14,19 +14,32 @@ function App() {
     diagnosis,
     tasks,
     selectedTasks,
-    agents,
-    selectedAgents,
+    categoryTemplates,
+    categorySelections,
     executions,
+    currentRunSnapshot,
+    selectedCaseId,
+    qaHistory,
     quantitativeMetrics,
     qualitativeInsights,
+    categorySummary,
+    representativeSamples,
     recommendations,
+    finalReportBundle,
+    minSelectedTasks,
+    maxSelectedTasks,
     goToStep,
     updateUrl,
     generateDiagnosis,
     toggleTask,
-    toggleAgent,
+    incrementCategoryCount,
+    decrementCategoryCount,
     generateExecutions,
     generateReport,
+    selectCase,
+    askCaseQuestion,
+    askGlobalQuestion,
+    reset,
   } = useUXAgent();
 
   const renderStep = () => {
@@ -36,8 +49,8 @@ function App() {
           <InitStep
             targetUrl={targetUrl}
             onUrlChange={updateUrl}
-            onNext={() => {
-              generateDiagnosis();
+            onNext={async () => {
+              await generateDiagnosis();
               goToStep('analysis');
             }}
           />
@@ -56,12 +69,15 @@ function App() {
           <TaskSelectionStep
             tasks={tasks}
             selectedTasks={selectedTasks}
-            agents={agents}
-            selectedAgents={selectedAgents}
+            categoryTemplates={categoryTemplates}
+            categorySelections={categorySelections}
+            minSelectedTasks={minSelectedTasks}
+            maxSelectedTasks={maxSelectedTasks}
             onTaskToggle={toggleTask}
-            onAgentToggle={toggleAgent}
-            onNext={() => {
-              generateExecutions();
+            onCategoryIncrement={incrementCategoryCount}
+            onCategoryDecrement={decrementCategoryCount}
+            onNext={async () => {
+              await generateExecutions();
               goToStep('execution');
             }}
             onBack={() => goToStep('analysis')}
@@ -71,9 +87,12 @@ function App() {
         return (
           <ExecutionStep
             executions={executions}
-            agents={agents}
-            onComplete={() => {
-              generateReport();
+            selectedCaseId={selectedCaseId}
+            qaHistory={qaHistory}
+            onSelectCase={selectCase}
+            onAskCaseQuestion={askCaseQuestion}
+            onComplete={async () => {
+              await generateReport();
               goToStep('report');
             }}
           />
@@ -84,9 +103,16 @@ function App() {
             targetUrl={targetUrl}
             quantitativeMetrics={quantitativeMetrics}
             qualitativeInsights={qualitativeInsights}
+            categorySummary={categorySummary}
+            representativeSamples={representativeSamples}
             recommendations={recommendations}
+            finalReportBundle={finalReportBundle}
+            runSnapshot={currentRunSnapshot}
+            qaHistory={qaHistory}
+            onAskCaseQuestion={askCaseQuestion}
+            onAskGlobalQuestion={askGlobalQuestion}
             onRestart={() => {
-              window.location.reload();
+              reset();
             }}
           />
         );

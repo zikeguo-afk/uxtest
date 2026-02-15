@@ -1,7 +1,9 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Check, AlertTriangle, X, FileCode, Layers, ArrowRight, Code } from 'lucide-react';
+import { taskDetailTemplates } from '@/data/mock/taskDetailTemplates';
+import { Check, AlertTriangle, X, FileCode, Layers, ArrowRight, Code, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import type { DiagnosisItem, Task } from '@/types';
 
 interface AnalysisStepProps {
@@ -17,7 +19,56 @@ const statusConfig = {
   error: { icon: X, color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/30', label: '错误' },
 };
 
+const analysisStages = [
+  { id: 'crawl', label: '页面抓取', detail: '抓取 DOM 结构与交互元素清单' },
+  { id: 'structure', label: '结构解析', detail: '进行 DOM 分块并提取关键路径节点' },
+  { id: 'risk', label: '风险检查', detail: '检查无障碍、回环与异常状态风险' },
+  { id: 'tasks', label: '任务生成', detail: '生成并映射可用性任务模板' },
+];
+
+function resolveTaskDetail(task: Task) {
+  const detail = taskDetailTemplates[task.id];
+  if (detail) {
+    return detail;
+  }
+
+  return {
+    taskId: task.id,
+    title: task.name,
+    difficulty: '中等' as const,
+    estimatedDuration: '8-12分钟',
+    testScenario: task.description,
+    operationSteps: ['定位入口', '执行操作', '确认反馈', '完成并复核'],
+    successCriteria: ['任务目标完成', '反馈可理解', '结果可确认'],
+    tags: ['默认模板'],
+  };
+}
+
 export function AnalysisStep({ targetUrl, diagnosis, tasks, onNext }: AnalysisStepProps) {
+  const [activeStageIndex, setActiveStageIndex] = useState(0);
+  const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setActiveStageIndex((prev) => (prev + 1) % analysisStages.length);
+    }, 1100);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const activeStage = analysisStages[activeStageIndex];
+  const completedStageIds = useMemo(
+    () =>
+      new Set(
+        analysisStages
+          .slice(0, activeStageIndex)
+          .map((stage) => stage.id),
+      ),
+    [activeStageIndex],
+  );
+
   return (
     <div className="space-y-6">
       {/* 页面分析中动画 */}
@@ -37,6 +88,58 @@ export function AnalysisStep({ targetUrl, diagnosis, tasks, onNext }: AnalysisSt
           </div>
         </div>
       </div>
+
+      <Card className="bg-slate-900/50 border-slate-800 animate-slide-up" style={{ animationDelay: '60ms' }}>
+        <CardHeader>
+          <CardTitle className="text-slate-100 text-base">实时检查状态</CardTitle>
+          <CardDescription className="text-slate-400">
+            当前正在检查：{activeStage.label} · {activeStage.detail}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {analysisStages.map((stage) => {
+              const isActive = stage.id === activeStage.id;
+              const isCompleted = completedStageIds.has(stage.id);
+
+              return (
+                <div
+                  key={stage.id}
+                  className={`rounded-lg border px-3 py-2 flex items-center justify-between ${
+                    isActive
+                      ? 'border-emerald-500/40 bg-emerald-500/10'
+                      : isCompleted
+                        ? 'border-blue-500/30 bg-blue-500/10'
+                        : 'border-slate-800 bg-slate-950/40'
+                  }`}
+                >
+                  <div className="text-sm">
+                    <div className={`${isActive ? 'text-emerald-200' : isCompleted ? 'text-blue-200' : 'text-slate-300'}`}>
+                      {stage.label}
+                    </div>
+                    <div className="text-xs text-slate-500">{stage.detail}</div>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    {isActive && (
+                      <>
+                        <Loader2 className="w-3 h-3 text-emerald-300 animate-spin" />
+                        <span className="text-emerald-300">检查中</span>
+                      </>
+                    )}
+                    {!isActive && isCompleted && (
+                      <>
+                        <Check className="w-3 h-3 text-blue-300" />
+                        <span className="text-blue-300">已检查</span>
+                      </>
+                    )}
+                    {!isActive && !isCompleted && <span className="text-slate-500">等待中</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* 技术诊断报告 */}
       <div className="animate-slide-up" style={{ animationDelay: '100ms' }}>
@@ -113,15 +216,61 @@ export function AnalysisStep({ targetUrl, diagnosis, tasks, onNext }: AnalysisSt
                   className="p-3 bg-slate-950/50 border border-slate-800 rounded-lg hover:border-slate-700 transition-colors animate-scale-in"
                   style={{ animationDelay: `${500 + index * 30}ms` }}
                 >
-                  <div className="flex items-start gap-3">
-                    <span className="text-xs font-mono text-slate-600 mt-0.5">
-                      {String(task.id).padStart(2, '0')}
-                    </span>
-                    <div>
-                      <div className="text-sm font-medium text-slate-300">{task.name}</div>
-                      <div className="text-xs text-slate-500 mt-0.5">{task.description}</div>
+                  <button
+                    type="button"
+                    className="w-full text-left"
+                    onClick={() =>
+                      setExpandedTaskId((prev) => (prev === task.id ? null : task.id))
+                    }
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="text-xs font-mono text-slate-600 mt-0.5">
+                        {String(task.id).padStart(2, '0')}
+                      </span>
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-slate-300 flex items-center justify-between gap-2">
+                          <span>{task.name}</span>
+                          {expandedTaskId === task.id ? (
+                            <ChevronUp className="w-4 h-4 text-slate-500" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-slate-500" />
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">{task.description}</div>
+                      </div>
                     </div>
-                  </div>
+                  </button>
+
+                  {expandedTaskId === task.id && (
+                    <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-3">
+                      <div>
+                        <div className="text-xs text-blue-300 mb-1">测试场景</div>
+                        <p className="text-xs text-slate-300">{resolveTaskDetail(task).testScenario}</p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3">
+                        <div>
+                          <div className="text-xs text-slate-400 mb-1">操作步骤</div>
+                          <ol className="space-y-1">
+                            {resolveTaskDetail(task).operationSteps.map((step, stepIndex) => (
+                              <li key={`${task.id}-op-${stepIndex}`} className="text-xs text-slate-300">
+                                {stepIndex + 1}. {step}
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-400 mb-1">成功标准</div>
+                          <ul className="space-y-1">
+                            {resolveTaskDetail(task).successCriteria.map((criterion) => (
+                              <li key={`${task.id}-criterion-${criterion}`} className="text-xs text-emerald-300">
+                                ✓ {criterion}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

@@ -20,6 +20,8 @@ import type {
   QualitativeInsight,
   QuantitativeMetric,
   RepresentativeSample,
+  RuntimePhase,
+  RuntimeStatus,
   Step,
   Task,
   TaskExecution,
@@ -43,7 +45,19 @@ const providers: Record<string, UXAgentProvider> = {
   mock: mockProvider,
 };
 
+const runtimePhaseLabels: Record<RuntimePhase, string> = {
+  idle: '空闲',
+  analysis: '分析中',
+  sampling: '采样中',
+  reporting: '生成报告中',
+  qa: '追问处理中',
+  error: '异常',
+};
+
 function resolveDefaultProvider(): UXAgentProvider {
+  if (import.meta.env.MODE === 'test') {
+    return mockProvider;
+  }
   const providerName = import.meta.env.VITE_UX_AGENT_PROVIDER ?? 'mock';
   return providers[providerName] ?? mockProvider;
 }
@@ -176,9 +190,27 @@ function buildHistoryId(): string {
   return `qa-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
 
+function createRuntimeStatus(phase: RuntimePhase, lastError: string | null = null): RuntimeStatus {
+  return {
+    phase,
+    label: runtimePhaseLabels[phase],
+    isBusy: phase !== 'idle' && phase !== 'error',
+    updatedAt: new Date().toISOString(),
+    lastError,
+  };
+}
+
+function toErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return fallback;
+}
+
 export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider()) {
   const [currentStep, setCurrentStep] = useState<Step>('init');
   const [targetUrl, setTargetUrl] = useState('');
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>(() => createRuntimeStatus('idle'));
   const [diagnosis, setDiagnosis] = useState<DiagnosisItem[]>([]);
   const [tasks, setTasks] = useState<Task[]>(() => cloneTasks(defaultTasks));
   const [selectedTasks, setSelectedTasks] = useState<number[]>([]);
@@ -221,14 +253,29 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
     setCurrentStep(step);
   }, []);
 
+  const markRuntime = useCallback((phase: RuntimePhase, lastError: string | null = null) => {
+    setRuntimeStatus(createRuntimeStatus(phase, lastError));
+  }, []);
+
+  const markRuntimeError = useCallback((error: unknown, fallbackMessage: string) => {
+    setRuntimeStatus(createRuntimeStatus('error', toErrorMessage(error, fallbackMessage)));
+  }, []);
+
   const updateUrl = useCallback((url: string) => {
     setTargetUrl(url);
   }, []);
 
   const generateDiagnosis = useCallback(async () => {
-    const result = await safeGetDiagnosis(provider, targetUrl);
-    setDiagnosis(result);
-  }, [provider, targetUrl]);
+    markRuntime('analysis');
+    try {
+      const result = await safeGetDiagnosis(provider, targetUrl);
+      setDiagnosis(result);
+      markRuntime('idle');
+    } catch (error) {
+      markRuntimeError(error, '页面分析失败，请重试');
+      throw error;
+    }
+  }, [markRuntime, markRuntimeError, provider, targetUrl]);
 
   const toggleTask = useCallback((taskId: number) => {
     setTasks((prev) =>
@@ -289,35 +336,48 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
       categorySelections,
       maxCases: MAX_EXECUTION_CASES,
     };
+    markRuntime('sampling');
+    try {
+      const snapshot = await safeCreateRunSnapshot(provider, request);
+      const nextExecutions =
+        snapshot.executions.length > 0 ? snapshot.executions : await safeGetExecutions(provider, request);
 
-    const snapshot = await safeCreateRunSnapshot(provider, request);
-    const nextExecutions =
-      snapshot.executions.length > 0 ? snapshot.executions : await safeGetExecutions(provider, request);
-
-    setCurrentRunSnapshot(snapshot);
-    setExecutions(nextExecutions);
-    setGeneratedAgents(snapshot.generatedAgents.length > 0 ? snapshot.generatedAgents : extractGeneratedAgents(nextExecutions));
-    setSelectedCaseId(nextExecutions[0]?.caseId ?? null);
-    setQAHistory([]);
-    setFinalReportBundle(null);
-  }, [categorySelections, provider, selectedTasks, targetUrl]);
+      setCurrentRunSnapshot(snapshot);
+      setExecutions(nextExecutions);
+      setGeneratedAgents(snapshot.generatedAgents.length > 0 ? snapshot.generatedAgents : extractGeneratedAgents(nextExecutions));
+      setSelectedCaseId(nextExecutions[0]?.caseId ?? null);
+      setQAHistory([]);
+      setFinalReportBundle(null);
+      markRuntime('idle');
+    } catch (error) {
+      markRuntimeError(error, '测试样本生成失败，请重试');
+      throw error;
+    }
+  }, [categorySelections, markRuntime, markRuntimeError, provider, selectedTasks, targetUrl]);
 
   const generateReport = useCallback(async () => {
-    const report = await safeGetReport(provider, executions);
-    const bundle = buildFinalReportBundle({
-      runSnapshot: currentRunSnapshot,
-      quantitativeMetrics: report.quantitativeMetrics,
-      categorySummary: report.categorySummary,
-      representativeSamples: report.representativeSamples,
-    });
+    markRuntime('reporting');
+    try {
+      const report = await safeGetReport(provider, executions);
+      const bundle = buildFinalReportBundle({
+        runSnapshot: currentRunSnapshot,
+        quantitativeMetrics: report.quantitativeMetrics,
+        categorySummary: report.categorySummary,
+        representativeSamples: report.representativeSamples,
+      });
 
-    setQuantitativeMetrics(report.quantitativeMetrics);
-    setQualitativeInsights(report.qualitativeInsights);
-    setCategorySummary(report.categorySummary);
-    setRepresentativeSamples(report.representativeSamples);
-    setRecommendations(report.recommendations);
-    setFinalReportBundle(bundle);
-  }, [currentRunSnapshot, executions, provider]);
+      setQuantitativeMetrics(report.quantitativeMetrics);
+      setQualitativeInsights(report.qualitativeInsights);
+      setCategorySummary(report.categorySummary);
+      setRepresentativeSamples(report.representativeSamples);
+      setRecommendations(report.recommendations);
+      setFinalReportBundle(bundle);
+      markRuntime('idle');
+    } catch (error) {
+      markRuntimeError(error, '报告生成失败，请重试');
+      throw error;
+    }
+  }, [currentRunSnapshot, executions, markRuntime, markRuntimeError, provider]);
 
   const selectCase = useCallback((caseId: string) => {
     setSelectedCaseId(caseId);
@@ -329,25 +389,30 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
       if (!normalizedQuestion || !currentRunSnapshot) {
         return null;
       }
+      markRuntime('qa');
+      try {
+        const caseId = caseIdOverride ?? selectedCaseId ?? undefined;
+        const request: QARequest = {
+          runId: currentRunSnapshot.runId,
+          question: normalizedQuestion,
+          scope: 'case',
+          caseId,
+        };
 
-      const caseId = caseIdOverride ?? selectedCaseId ?? undefined;
-      const request: QARequest = {
-        runId: currentRunSnapshot.runId,
-        question: normalizedQuestion,
-        scope: 'case',
-        caseId,
-      };
+        const response = await safeAskQuestion(provider, request, currentRunSnapshot);
+        appendHistory('case', normalizedQuestion, response, caseId);
 
-      const response = await safeAskQuestion(provider, request, currentRunSnapshot);
-      appendHistory('case', normalizedQuestion, response, caseId);
-
-      if (caseIdOverride) {
-        setSelectedCaseId(caseIdOverride);
+        if (caseIdOverride) {
+          setSelectedCaseId(caseIdOverride);
+        }
+        markRuntime('idle');
+        return response;
+      } catch (error) {
+        markRuntimeError(error, '案例追问失败，请稍后重试');
+        return null;
       }
-
-      return response;
     },
-    [appendHistory, currentRunSnapshot, provider, selectedCaseId],
+    [appendHistory, currentRunSnapshot, markRuntime, markRuntimeError, provider, selectedCaseId],
   );
 
   const askGlobalQuestion = useCallback(
@@ -356,24 +421,31 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
       if (!normalizedQuestion || !currentRunSnapshot) {
         return null;
       }
+      markRuntime('qa');
+      try {
+        const request: QARequest = {
+          runId: currentRunSnapshot.runId,
+          question: normalizedQuestion,
+          scope: 'global',
+          filters,
+        };
 
-      const request: QARequest = {
-        runId: currentRunSnapshot.runId,
-        question: normalizedQuestion,
-        scope: 'global',
-        filters,
-      };
-
-      const response = await safeAskQuestion(provider, request, currentRunSnapshot);
-      appendHistory('global', normalizedQuestion, response);
-      return response;
+        const response = await safeAskQuestion(provider, request, currentRunSnapshot);
+        appendHistory('global', normalizedQuestion, response);
+        markRuntime('idle');
+        return response;
+      } catch (error) {
+        markRuntimeError(error, '全局追问失败，请稍后重试');
+        return null;
+      }
     },
-    [appendHistory, currentRunSnapshot, provider],
+    [appendHistory, currentRunSnapshot, markRuntime, markRuntimeError, provider],
   );
 
   const reset = useCallback(() => {
     setCurrentStep('init');
     setTargetUrl('');
+    setRuntimeStatus(createRuntimeStatus('idle'));
     setDiagnosis([]);
     setTasks(cloneTasks(defaultTasks));
     setSelectedTasks([]);
@@ -394,6 +466,7 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
   return {
     currentStep,
     targetUrl,
+    runtimeStatus,
     diagnosis,
     tasks,
     selectedTasks,

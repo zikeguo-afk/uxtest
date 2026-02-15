@@ -70,9 +70,9 @@ export function TaskSelectionStep({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="animate-slide-in-left" style={{ animationDelay: '100ms' }}>
-          <Card className="bg-slate-900/50 border-slate-800 h-full">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:min-h-[680px] items-stretch">
+        <div className="animate-slide-in-left flex" style={{ animationDelay: '100ms' }}>
+          <Card data-testid="task-selection-left-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -91,8 +91,8 @@ export function TaskSelectionStep({
                 </Badge>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2">
+            <CardContent className="flex-1 min-h-0">
+              <div className="space-y-2 h-full overflow-y-auto pr-2">
                 {tasks.map((task, index) => (
                   <div
                     key={task.id}
@@ -177,8 +177,8 @@ export function TaskSelectionStep({
           </Card>
         </div>
 
-        <div className="animate-slide-in-right" style={{ animationDelay: '200ms' }}>
-          <Card className="bg-slate-900/50 border-slate-800 h-full">
+        <div className="animate-slide-in-right flex" style={{ animationDelay: '200ms' }}>
+          <Card data-testid="task-selection-right-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -195,8 +195,8 @@ export function TaskSelectionStep({
                 <Badge className="bg-purple-500/20 text-purple-400 border-0">{totalSelectedPeople}</Badge>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
+            <CardContent className="flex-1 min-h-0">
+              <div className="space-y-3 h-full overflow-y-auto pr-2">
                 {categoryTemplates.map((category, index) => {
                   const count = selectionMap.get(category.id) ?? 0;
                   return (

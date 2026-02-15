@@ -1,8 +1,9 @@
-import type { Step } from '@/types';
-import { Check, Globe, Search, Users, Play, FileText } from 'lucide-react';
+import type { RuntimeStatus, Step } from '@/types';
+import { Check, Globe, Search, Users, Play, FileText, Loader2 } from 'lucide-react';
 
 interface ProgressBarProps {
   currentStep: Step;
+  runtimeStatus: RuntimeStatus;
 }
 
 const steps = [
@@ -13,7 +14,7 @@ const steps = [
   { id: 'report', label: '生成报告', icon: FileText },
 ] as const;
 
-export function ProgressBar({ currentStep }: ProgressBarProps) {
+export function ProgressBar({ currentStep, runtimeStatus }: ProgressBarProps) {
   const currentIndex = steps.findIndex(s => s.id === currentStep);
 
   return (
@@ -45,13 +46,31 @@ export function ProgressBar({ currentStep }: ProgressBarProps) {
                   </div>
                   <span
                     className={`
-                      text-xs font-medium transition-colors duration-300 hidden sm:block
+                      text-xs font-medium transition-colors duration-300 hidden sm:flex sm:items-center sm:gap-1
                       ${isCompleted ? 'text-emerald-400' : ''}
                       ${isCurrent ? 'text-emerald-400' : ''}
                       ${isPending ? 'text-slate-500' : ''}
                     `}
                   >
                     {step.label}
+                    {isCurrent && (
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] ${
+                          runtimeStatus.phase === 'error'
+                            ? 'border-red-500/40 text-red-300'
+                            : runtimeStatus.isBusy
+                              ? 'border-blue-500/40 text-blue-300'
+                              : 'border-emerald-500/40 text-emerald-300'
+                        }`}
+                      >
+                        {runtimeStatus.isBusy ? (
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                        ) : (
+                          <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                        )}
+                        {runtimeStatus.label}
+                      </span>
+                    )}
                   </span>
                 </div>
                 {index < steps.length - 1 && (

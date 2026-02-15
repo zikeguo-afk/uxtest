@@ -332,6 +332,29 @@ export function ReportStep({
     },
   ];
 
+  const totalCases = runSnapshot?.executions.length ?? 0;
+  const selectedTaskCount = runSnapshot?.selectedTaskIds.length ?? 0;
+  const coveredTaskCount = runSnapshot
+    ? new Set(runSnapshot.executions.map((execution) => execution.taskId)).size
+    : 0;
+  const taskCoverageRate =
+    selectedTaskCount > 0 ? Math.round((coveredTaskCount / selectedTaskCount) * 100) : 0;
+  const qaEvidenceCount = qaHistory.filter((item) => item.response.mode === 'evidence').length;
+  const qaInferenceCount = qaHistory.filter((item) => item.response.mode === 'inference').length;
+  const qaTotal = qaEvidenceCount + qaInferenceCount;
+  const evidenceRate = qaTotal > 0 ? Math.round((qaEvidenceCount / qaTotal) * 100) : 0;
+  const inferenceRate = qaTotal > 0 ? Math.round((qaInferenceCount / qaTotal) * 100) : 0;
+  const providerSource = import.meta.env.MODE === 'test'
+    ? 'mock'
+    : (import.meta.env.VITE_UX_AGENT_PROVIDER ?? 'mock');
+  const providerLabel = providerSource === 'api' ? 'API Provider' : 'Mock Provider';
+  const reliabilityLevel =
+    totalCases >= 20 && taskCoverageRate >= 90
+      ? '高'
+      : totalCases >= 10 && taskCoverageRate >= 70
+        ? '中'
+        : '基础';
+
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-3 sm:p-4 lg:p-6 text-slate-100 space-y-6">
       <div className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4 sm:p-5">
@@ -422,6 +445,46 @@ export function ReportStep({
                 </div>
               ))}
             </div>
+
+            <Card className="bg-slate-900/50 border-slate-800">
+              <CardHeader>
+                <CardTitle className="text-slate-100 text-lg">结果可信度</CardTitle>
+                <CardDescription className="text-slate-400">
+                  证据优先回答，推断结论会显式标注为“推断回答”
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+                    <div className="text-xs text-slate-500">可信度等级</div>
+                    <div className="text-lg font-semibold text-emerald-300 mt-1">{reliabilityLevel}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+                    <div className="text-xs text-slate-500">样本规模</div>
+                    <div className="text-lg font-semibold text-slate-200 mt-1">{totalCases} 条</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+                    <div className="text-xs text-slate-500">任务覆盖</div>
+                    <div className="text-lg font-semibold text-slate-200 mt-1">
+                      {coveredTaskCount}/{selectedTaskCount} ({taskCoverageRate}%)
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+                    <div className="text-xs text-slate-500">数据来源</div>
+                    <div className="text-lg font-semibold text-slate-200 mt-1">{providerLabel}</div>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+                  <div className="text-xs text-slate-500 mb-2">问答证据构成</div>
+                  <div className="flex flex-wrap items-center gap-4 text-sm">
+                    <span className="text-emerald-300">证据回答: {qaEvidenceCount} ({evidenceRate}%)</span>
+                    <span className="text-amber-300">推断回答: {qaInferenceCount} ({inferenceRate}%)</span>
+                    <span className="text-slate-400">推断已标注，建议结合证据引用复核关键结论。</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </section>
 
           <section id="task-details" className="scroll-mt-32 space-y-4">

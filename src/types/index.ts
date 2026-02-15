@@ -16,6 +16,8 @@ export type TaskPerformanceStatus = 'healthy' | 'warning' | 'risk';
 
 export type MetricTone = 'positive' | 'neutral' | 'negative';
 
+export type RuntimePhase = 'idle' | 'analysis' | 'sampling' | 'reporting' | 'qa' | 'error';
+
 export interface TraitProfile {
   patience: number;
   techSavvy: number;
@@ -289,9 +291,18 @@ export interface FinalReportBundle {
   navigation: ReportNavSection[];
 }
 
+export interface RuntimeStatus {
+  phase: RuntimePhase;
+  label: string;
+  isBusy: boolean;
+  updatedAt: string;
+  lastError: string | null;
+}
+
 export interface AppState {
   currentStep: Step;
   targetUrl: string;
+  runtimeStatus: RuntimeStatus;
   diagnosis: DiagnosisItem[];
   tasks: Task[];
   selectedTasks: number[];

@@ -253,6 +253,10 @@ export function ExecutionStep({
   ]);
 
   const activeAutoCase = executionViews[playback.currentCaseIndex] ?? null;
+  const activeAutoStepTotal = activeAutoCase?.steps.length ?? 0;
+  const activeAutoStepIndex = playback.isFinished
+    ? activeAutoStepTotal
+    : Math.min(activeAutoStepTotal, playback.currentStepIndex + 1);
 
   useEffect(() => {
     if (!activeAutoCase) {
@@ -449,6 +453,9 @@ export function ExecutionStep({
             <div className="text-sm text-slate-500">
               已完成步骤 {completedSteps}/{totalSteps} · 当前案例 {executionViews.length > 0 ? playback.currentCaseIndex + 1 : 0}/{executionViews.length}
             </div>
+            <div className="text-xs text-slate-400 mt-1">
+              当前任务: {activeAutoCase?.taskName ?? '暂无'} · 当前步骤: {activeAutoStepIndex}/{activeAutoStepTotal}
+            </div>
           </div>
         </div>
         <Badge className={playback.isFinished ? 'bg-emerald-500/20 text-emerald-300 border-0' : 'bg-blue-500/20 text-blue-300 border-0'}>
@@ -499,15 +506,15 @@ export function ExecutionStep({
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-4 animate-slide-in-left" style={{ animationDelay: '80ms' }}>
-          <Card className="bg-slate-900/50 border-slate-800 h-full">
-            <CardHeader>
+          <Card className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0">
+            <CardHeader className="border-b border-slate-800/60">
               <CardTitle className="text-slate-100 flex items-center gap-2">
                 <Layers className="w-4 h-4 text-blue-400" />
                 任务汇总
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-[560px] overflow-y-auto pr-1">
+            <CardContent className="flex-1 min-h-0 pt-4">
+              <div className="space-y-2 h-full overflow-y-auto pr-1">
                 {taskSummaries.map((summary) => {
                   const active = summary.taskId === activeTask?.taskId;
                   const doneCases = summary.success + summary.failed;
@@ -552,15 +559,15 @@ export function ExecutionStep({
         </div>
 
         <div className="lg:col-span-4 animate-slide-in-up" style={{ animationDelay: '140ms' }}>
-          <Card className="bg-slate-900/50 border-slate-800 h-full">
-            <CardHeader>
+          <Card className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0">
+            <CardHeader className="border-b border-slate-800/60">
               <CardTitle className="text-slate-100 flex items-center gap-2">
                 <Search className="w-4 h-4 text-cyan-400" />
                 任务样本列表
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-[560px] overflow-y-auto pr-1">
+            <CardContent className="flex-1 min-h-0 pt-4">
+              <div className="space-y-2 h-full overflow-y-auto pr-1">
                 {activeTaskCases.map((item) => {
                   const active = item.resolvedCaseId === selectedCase?.resolvedCaseId;
                   const visible = isCaseVisible(item.executionIndex, playback);
@@ -606,14 +613,14 @@ export function ExecutionStep({
         </div>
 
         <div className="lg:col-span-4 animate-slide-in-right" style={{ animationDelay: '200ms' }}>
-          <Card className="bg-slate-900/50 border-slate-800 h-full">
-            <CardHeader>
+          <Card className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0">
+            <CardHeader className="border-b border-slate-800/60">
               <CardTitle className="text-slate-100 flex items-center gap-2">
                 <User className="w-4 h-4 text-emerald-400" />
                 案例详情与追问
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1 min-h-0 pt-4">
               {selectedCase ? (
                 <div className="space-y-4">
                   <div className="p-3 rounded-lg border border-slate-800 bg-slate-950/50">

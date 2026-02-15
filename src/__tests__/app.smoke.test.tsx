@@ -56,6 +56,7 @@ describe('App smoke flow', () => {
     expect(screen.getAllByText('任务完成绩效').length).toBeGreaterThan(0);
     expect(screen.getByText('SUS可用性量表结果')).toBeTruthy();
     expect(screen.getByText('NASA-TLX 工作负荷评估')).toBeTruthy();
+    expect(screen.getByText('结果可信度')).toBeTruthy();
     expect(screen.getAllByText('类别汇总').length).toBeGreaterThan(0);
     expect(screen.getAllByText('全局追问（当前 Run）').length).toBeGreaterThan(0);
   }, 15000);

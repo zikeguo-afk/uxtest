@@ -1,11 +1,11 @@
 import { useCallback, useState } from 'react';
 import { defaultAgentCategories } from '@/data/mock/agentCategories';
-import { defaultTasks } from '@/data/mock/tasks';
 import { apiProvider } from '@/services/apiProvider';
 import { mockProvider } from '@/services/mockProvider';
 import { buildFinalReportBundle } from '@/services/finalReportBuilder';
-import type { UXAgentProvider, UXAgentReport } from '@/services/uxAgentProvider';
+import type { DiagnosisResult, UXAgentProvider, UXAgentReport } from '@/services/uxAgentProvider';
 import type {
+  AnalysisProgressStatus,
   AgentCategorySelection,
   AgentCategoryTemplate,
   CategoryReportItem,
@@ -24,6 +24,7 @@ import type {
   RuntimeStatus,
   Step,
   Task,
+  TaskGenerationStatus,
   TaskExecution,
   TestRunSnapshot,
   TraitProfile,
@@ -39,6 +40,8 @@ const MAX_EXECUTION_CASES = (() => {
   }
   return Math.min(Math.floor(rawValue), 40);
 })();
+const DEFAULT_TARGET_URL =
+  import.meta.env.VITE_DEFAULT_TARGET_URL ?? 'https://frbe2kpuvbfve.ok.kimi.link';
 
 const providers: Record<string, UXAgentProvider> = {
   api: apiProvider,
@@ -58,16 +61,12 @@ function resolveDefaultProvider(): UXAgentProvider {
   if (import.meta.env.MODE === 'test') {
     return mockProvider;
   }
-  const providerName = import.meta.env.VITE_UX_AGENT_PROVIDER ?? 'mock';
+  const providerName = import.meta.env.VITE_UX_AGENT_PROVIDER ?? 'api';
   return providers[providerName] ?? mockProvider;
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-function cloneTasks(tasks: Task[]): Task[] {
-  return tasks.map((task) => ({ ...task }));
 }
 
 function cloneCategoryTemplates(templates: AgentCategoryTemplate[]): AgentCategoryTemplate[] {
@@ -128,13 +127,12 @@ function extractGeneratedAgents(executions: TaskExecution[]): GeneratedAgentPers
   return [...map.values()];
 }
 
-async function safeGetDiagnosis(provider: UXAgentProvider, targetUrl: string): Promise<DiagnosisItem[]> {
-  try {
-    return await provider.getDiagnosis(targetUrl);
-  } catch (error) {
-    console.error('Provider getDiagnosis failed, falling back to mockProvider.', error);
-    return mockProvider.getDiagnosis(targetUrl);
-  }
+async function safeGetDiagnosis(
+  provider: UXAgentProvider,
+  targetUrl: string,
+  onProgress?: (progress: AnalysisProgressStatus) => void,
+): Promise<DiagnosisResult> {
+  return provider.getDiagnosis(targetUrl, { onProgress });
 }
 
 async function safeGetExecutions(
@@ -207,12 +205,54 @@ function toErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function createTaskGenerationStatus(
+  status: TaskGenerationStatus['status'] = 'failed',
+  code = 'NOT_STARTED',
+  message = '尚未生成任务。',
+  blocked = true,
+): TaskGenerationStatus {
+  return {
+    status,
+    code,
+    message,
+    blocked,
+  };
+}
+
+function cloneDiagnosisResult(result: DiagnosisResult): DiagnosisResult {
+  return {
+    items: result.items.map((item) => ({ ...item })),
+    tasks: result.tasks.map((task) => ({
+      ...task,
+      selected: Boolean(task.selected),
+      operationSteps: task.operationSteps ? [...task.operationSteps] : undefined,
+      successCriteria: task.successCriteria ? [...task.successCriteria] : undefined,
+      tags: task.tags ? [...task.tags] : undefined,
+      evidenceRefs: task.evidenceRefs ? [...task.evidenceRefs] : undefined,
+      evidenceReason: task.evidenceReason,
+    })),
+    taskGeneration: { ...result.taskGeneration },
+    source: result.source,
+  };
+}
+
+function cloneAnalysisProgress(progress: AnalysisProgressStatus): AnalysisProgressStatus {
+  return {
+    ...progress,
+    stages: progress.stages.map((stage) => ({ ...stage })),
+  };
+}
+
 export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider()) {
   const [currentStep, setCurrentStep] = useState<Step>('init');
-  const [targetUrl, setTargetUrl] = useState('');
+  const [targetUrl, setTargetUrl] = useState(DEFAULT_TARGET_URL);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>(() => createRuntimeStatus('idle'));
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgressStatus | null>(null);
   const [diagnosis, setDiagnosis] = useState<DiagnosisItem[]>([]);
-  const [tasks, setTasks] = useState<Task[]>(() => cloneTasks(defaultTasks));
+  const [taskGeneration, setTaskGeneration] = useState<TaskGenerationStatus>(() =>
+    createTaskGenerationStatus(),
+  );
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTasks, setSelectedTasks] = useState<number[]>([]);
   const [categoryTemplates] = useState<AgentCategoryTemplate[]>(() =>
     cloneCategoryTemplates(defaultAgentCategories),
@@ -267,11 +307,29 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
 
   const generateDiagnosis = useCallback(async () => {
     markRuntime('analysis');
+    setDiagnosis([]);
+    setTaskGeneration(createTaskGenerationStatus());
+    setTasks([]);
+    setSelectedTasks([]);
+    setAnalysisProgress(null);
     try {
-      const result = await safeGetDiagnosis(provider, targetUrl);
-      setDiagnosis(result);
+      const result = await safeGetDiagnosis(provider, targetUrl, (progress) => {
+        setAnalysisProgress(cloneAnalysisProgress(progress));
+      });
+      const normalized = cloneDiagnosisResult(result);
+      setDiagnosis(normalized.items);
+      setTaskGeneration(normalized.taskGeneration);
+      setTasks(normalized.tasks.map((task) => ({ ...task, selected: false })));
       markRuntime('idle');
     } catch (error) {
+      setTaskGeneration(
+        createTaskGenerationStatus(
+          'failed',
+          'DIAGNOSIS_REQUEST_FAILED',
+          toErrorMessage(error, '页面分析失败，请重试'),
+          true,
+        ),
+      );
       markRuntimeError(error, '页面分析失败，请重试');
       throw error;
     }
@@ -330,9 +388,26 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
   }, [categoryTemplates]);
 
   const generateExecutions = useCallback(async () => {
+    const selectedTaskCatalog = tasks
+      .filter((task) => selectedTasks.includes(task.id))
+      .map((task) => ({
+        id: task.id,
+        name: task.name,
+        description: task.description,
+        difficulty: task.difficulty,
+        estimatedDuration: task.estimatedDuration,
+        testScenario: task.testScenario,
+        operationSteps: task.operationSteps ? [...task.operationSteps] : undefined,
+        successCriteria: task.successCriteria ? [...task.successCriteria] : undefined,
+        tags: task.tags ? [...task.tags] : undefined,
+        evidenceRefs: task.evidenceRefs ? [...task.evidenceRefs] : undefined,
+        evidenceReason: task.evidenceReason,
+      }));
+
     const request: ExecutionRequest = {
       targetUrl,
       selectedTaskIds: selectedTasks,
+      taskCatalog: selectedTaskCatalog,
       categorySelections,
       maxCases: MAX_EXECUTION_CASES,
     };
@@ -353,7 +428,7 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
       markRuntimeError(error, '测试样本生成失败，请重试');
       throw error;
     }
-  }, [categorySelections, markRuntime, markRuntimeError, provider, selectedTasks, targetUrl]);
+  }, [categorySelections, markRuntime, markRuntimeError, provider, selectedTasks, targetUrl, tasks]);
 
   const generateReport = useCallback(async () => {
     markRuntime('reporting');
@@ -444,10 +519,12 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
 
   const reset = useCallback(() => {
     setCurrentStep('init');
-    setTargetUrl('');
+    setTargetUrl(DEFAULT_TARGET_URL);
     setRuntimeStatus(createRuntimeStatus('idle'));
+    setAnalysisProgress(null);
     setDiagnosis([]);
-    setTasks(cloneTasks(defaultTasks));
+    setTaskGeneration(createTaskGenerationStatus());
+    setTasks([]);
     setSelectedTasks([]);
     setCategorySelections(createDefaultCategorySelections(categoryTemplates));
     setGeneratedAgents([]);
@@ -467,7 +544,9 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
     currentStep,
     targetUrl,
     runtimeStatus,
+    analysisProgress,
     diagnosis,
+    taskGeneration,
     tasks,
     selectedTasks,
     categoryTemplates,

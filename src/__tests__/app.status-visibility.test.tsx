@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from '@/App';
+import { defaultTasks } from '@/data/mock/tasks';
 import { mockProvider } from '@/services/mockProvider';
-import type { DiagnosisItem } from '@/types';
+import type { DiagnosisResult } from '@/services/uxAgentProvider';
 
 afterEach(() => {
   cleanup();
@@ -11,13 +12,23 @@ afterEach(() => {
 
 describe('App runtime status visibility', () => {
   it('updates header status during analysis and returns to idle', async () => {
-    const delayedDiagnosis: DiagnosisItem[] = [
-      {
-        dimension: '导航结构',
+    const delayedDiagnosis: DiagnosisResult = {
+      items: [
+        {
+          dimension: '导航结构',
+          status: 'success',
+          description: '导航层级清晰',
+        },
+      ],
+      tasks: defaultTasks.map((task) => ({ ...task })),
+      taskGeneration: {
         status: 'success',
-        description: '导航层级清晰',
+        code: 'TEST_OK',
+        message: '测试任务生成成功',
+        blocked: false,
       },
-    ];
+      source: 'mock',
+    };
 
     vi.spyOn(mockProvider, 'getDiagnosis').mockImplementationOnce(
       async () =>
@@ -40,7 +51,11 @@ describe('App runtime status visibility', () => {
     });
 
     expect(await screen.findByText('A. 初步技术诊断报告')).toBeTruthy();
-    expect(screen.getAllByText('空闲').length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.getAllByText('空闲').length).toBeGreaterThan(0);
+    }, {
+      timeout: 6000,
+    });
   }, 12000);
 
   it('shows error status when global qa request fails', async () => {
@@ -80,4 +95,82 @@ describe('App runtime status visibility', () => {
     });
     expect(screen.getByText(/问答服务暂不可用|全局追问失败/)).toBeTruthy();
   }, 20000);
+
+  it('shows diagnosis-only mode when task generation is blocked', async () => {
+    vi.spyOn(mockProvider, 'getDiagnosis').mockResolvedValueOnce({
+      items: [
+        {
+          dimension: '结构化导航',
+          status: 'success',
+          description: '导航层级可理解',
+        },
+      ],
+      tasks: [],
+      taskGeneration: {
+        status: 'failed',
+        code: 'INSUFFICIENT_VALID_TASKS',
+        message: '任务有效数量不足（0/6）。',
+        blocked: true,
+      },
+      source: 'diagnosis-only',
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText('https://www.example.com'), {
+      target: { value: 'https://example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
+
+    expect(await screen.findByText('A. 初步技术诊断报告', {}, { timeout: 10000 })).toBeTruthy();
+    expect(screen.getByText('任务生成失败（已阻断）')).toBeTruthy();
+    expect(screen.getAllByText(/任务有效数量不足/).length).toBeGreaterThan(0);
+    expect(
+      (screen.getByRole('button', { name: '下一步：选择任务与测试人员' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  }, 15000);
+
+  it('shows degraded hint and keeps next-step enabled when tasks are auto-filled', async () => {
+    vi.spyOn(mockProvider, 'getDiagnosis').mockResolvedValueOnce({
+      items: [
+        {
+          dimension: '结构化导航',
+          status: 'warning',
+          description: '任务自动补全已启用。',
+        },
+      ],
+      tasks: defaultTasks.slice(0, 15).map((task, index) => ({
+        ...task,
+        id: index + 1,
+        name: `用户完成第${index + 1}项任务`,
+        selected: false,
+      })),
+      taskGeneration: {
+        status: 'degraded',
+        code: 'TASK_GENERATION_DEGRADED',
+        message: '任务已自动补全到 15 条。',
+        blocked: false,
+        quality: {
+          autoFilledCount: 6,
+          syntheticCount: 4,
+          rewrittenNameCount: 3,
+          weakGateWarnings: 1,
+        },
+      },
+      source: 'llm-4stage',
+    });
+
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('https://www.example.com'), {
+      target: { value: 'https://example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
+
+    expect(await screen.findByText('任务已自动补全（可继续）', {}, { timeout: 10000 })).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: '下一步：选择任务与测试人员' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  }, 15000);
 });

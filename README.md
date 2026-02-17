@@ -1,7 +1,7 @@
 # UXAgent Local Workspace
 
 This repository is a local, editable version of the `Kimi_Agent_可用性测试流程` frontend.
-It runs as a Vite + React + TypeScript app and supports both `mock` and `api` providers.
+It runs as a Vite + React + TypeScript app and supports both `mock` and `api` providers (default `api`).
 
 ## Prerequisites
 
@@ -72,7 +72,8 @@ In backend:
 - Variability is count-driven and not exposed in UI controls.
 - Execution sampling uses fixed budget, default cap `40` cases.
 - Run snapshots are generated for downstream drill-down and QA.
-- `/diagnosis` supports real URL analysis (`EVALUATION_MODE=auto|real`) with automatic mock fallback in `auto`.
+- `/diagnosis` supports real URL analysis (`EVALUATION_MODE=auto|real`) with strict task gate.
+- If generated tasks fail quality/evidence checks, API returns diagnosis only (`tasks=[]`) and blocks next step.
 
 In `execution`:
 
@@ -94,7 +95,9 @@ In `report`:
 
 ## LLM Readiness
 
-- LLM is optional and only used to polish `inference` answers.
+- LLM is optional and can be used for:
+  - `/diagnosis` code/usability analysis and task priority generation.
+  - QA `inference` answer enhancement.
 - LLM must not create or alter evidence IDs (`caseId/taskId/step`).
 - Check status: `GET /api/v1/llm/healthz`
 - Deep probe external API: `GET /api/v1/llm/healthz?probe=1`
@@ -107,6 +110,7 @@ Copy `.env.example` to `.env` if needed:
 - `VITE_ENABLE_KIMI_INSPECT=true`
 - `VITE_MAX_EXECUTION_CASES=40`
 - `VITE_API_BASE_URL=http://localhost:8787`
+- `VITE_DEFAULT_TARGET_URL=https://frbe2kpuvbfve.ok.kimi.link`
 - `API_PORT=8787`
 - `RUN_TTL_MS=7200000`
 - `RUN_CACHE_SIZE=200`
@@ -120,6 +124,14 @@ Copy `.env.example` to `.env` if needed:
 - `LLM_MODEL=gpt-4o-mini`
 - `LLM_TIMEOUT_MS=20000`
 - `LLM_TEMPERATURE=0.2`
+- `LLM_STAGE_RETRY_COUNT=2`
+- `LLM_JSON_REPAIR_COUNT=1`
+- `LLM_CHUNK_TOKEN_BUDGET=1600`
+- `DIAGNOSIS_PIPELINE_MODE=llm-4stage`
+- `SOURCE_COLLECT_SAME_ORIGIN_ONLY=true`
+- `SOURCE_COLLECT_MAX_TOTAL_BYTES=2500000`
+- `DIAGNOSIS_STRICT_TASKS=true`
+- `DIAGNOSIS_TASK_BLACKLIST=购物车,结账,优惠券,下单,收货地址,SKU,订单,支付`
 
 ## Provider Architecture
 

@@ -13,6 +13,14 @@ export interface EnvConfig {
   llmModel: string;
   llmTimeoutMs: number;
   llmTemperature: number;
+  llmStageRetryCount: number;
+  llmJsonRepairCount: number;
+  llmChunkTokenBudget: number;
+  diagnosisPipelineMode: 'legacy' | 'llm-4stage';
+  sourceCollectSameOriginOnly: boolean;
+  sourceCollectMaxTotalBytes: number;
+  diagnosisStrictTasks: boolean;
+  diagnosisTaskBlacklist: string[];
 }
 
 function readNumber(name: string, fallback: number, min: number, max: number): number {
@@ -60,6 +68,20 @@ function readFloat(name: string, fallback: number, min: number, max: number): nu
   return Math.min(max, Math.max(min, value));
 }
 
+function readStringList(name: string, fallback: string[]): string[] {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  return parsed.length > 0 ? parsed : fallback;
+}
+
 export function loadEnv(): EnvConfig {
   const evaluationModeRaw = readString('EVALUATION_MODE', 'auto');
   const evaluationMode =
@@ -69,6 +91,11 @@ export function loadEnv(): EnvConfig {
 
   const llmProviderRaw = readString('LLM_PROVIDER', 'mock');
   const llmProvider = llmProviderRaw === 'openai-compatible' ? 'openai-compatible' : 'mock';
+  const diagnosisPipelineModeRaw = readString('DIAGNOSIS_PIPELINE_MODE', 'llm-4stage');
+  const diagnosisPipelineMode =
+    diagnosisPipelineModeRaw === 'legacy' || diagnosisPipelineModeRaw === 'llm-4stage'
+      ? diagnosisPipelineModeRaw
+      : 'llm-4stage';
 
   return {
     apiPort: readNumber('API_PORT', 8787, 1, 65535),
@@ -83,7 +110,24 @@ export function loadEnv(): EnvConfig {
     llmApiBaseUrl: readString('LLM_API_BASE_URL', 'https://api.openai.com/v1'),
     llmApiKey: readString('LLM_API_KEY', ''),
     llmModel: readString('LLM_MODEL', 'gpt-4o-mini'),
-    llmTimeoutMs: readNumber('LLM_TIMEOUT_MS', 20_000, 2_000, 120_000),
+    llmTimeoutMs: readNumber('LLM_TIMEOUT_MS', 20_000, 2_000, 600_000),
     llmTemperature: readFloat('LLM_TEMPERATURE', 0.2, 0, 1),
+    llmStageRetryCount: readNumber('LLM_STAGE_RETRY_COUNT', 2, 0, 5),
+    llmJsonRepairCount: readNumber('LLM_JSON_REPAIR_COUNT', 1, 0, 3),
+    llmChunkTokenBudget: readNumber('LLM_CHUNK_TOKEN_BUDGET', 1_600, 400, 8_000),
+    diagnosisPipelineMode,
+    sourceCollectSameOriginOnly: readBoolean('SOURCE_COLLECT_SAME_ORIGIN_ONLY', true),
+    sourceCollectMaxTotalBytes: readNumber('SOURCE_COLLECT_MAX_TOTAL_BYTES', 2_500_000, 200_000, 20_000_000),
+    diagnosisStrictTasks: readBoolean('DIAGNOSIS_STRICT_TASKS', true),
+    diagnosisTaskBlacklist: readStringList('DIAGNOSIS_TASK_BLACKLIST', [
+      '购物车',
+      '结账',
+      '优惠券',
+      '下单',
+      '收货地址',
+      'SKU',
+      '订单',
+      '支付',
+    ]),
   };
 }

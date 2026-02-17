@@ -11,6 +11,7 @@ export type ReportTemplateTier = 'excellent' | 'medium' | 'needs-improvement';
 export type TaskPerformanceStatus = 'healthy' | 'warning' | 'risk';
 
 export type MetricTone = 'positive' | 'neutral' | 'negative';
+export type EvidenceSource = 'dom' | 'interaction' | 'route-script' | 'text';
 
 export interface TraitProfile {
   patience: number;
@@ -23,12 +24,43 @@ export interface Task {
   name: string;
   description: string;
   selected: boolean;
+  difficulty?: '简单' | '中等' | '困难';
+  estimatedDuration?: string;
+  testScenario?: string;
+  operationSteps?: string[];
+  successCriteria?: string[];
+  tags?: string[];
+  evidenceRefs?: string[];
+  evidenceReason?: string;
+}
+
+export interface EvidenceRefItem {
+  refId: string;
+  source: EvidenceSource;
+  label: string;
+  excerpt: string;
 }
 
 export interface DiagnosisItem {
   dimension: string;
   status: 'success' | 'warning' | 'error';
   description: string;
+}
+
+export interface TaskGenerationStatus {
+  status: 'success' | 'degraded' | 'failed';
+  code: string;
+  message: string;
+  blocked: boolean;
+  candidateCount?: number;
+  acceptedCount?: number;
+  rejectedCount?: number;
+  quality?: {
+    autoFilledCount?: number;
+    syntheticCount?: number;
+    rewrittenNameCount?: number;
+    weakGateWarnings?: number;
+  };
 }
 
 export interface AgentCategoryTemplate {
@@ -88,6 +120,7 @@ export interface TaskExecution {
 export interface ExecutionRequest {
   targetUrl?: string;
   selectedTaskIds: number[];
+  taskCatalog?: Array<Omit<Task, 'selected'>>;
   categorySelections: AgentCategorySelection[];
   maxCases: number;
 }
@@ -153,6 +186,7 @@ export interface TestRunSnapshot {
   createdAt: string;
   targetUrl?: string;
   selectedTaskIds: number[];
+  taskCatalog?: Task[];
   categorySelections: AgentCategorySelection[];
   generatedAgents: GeneratedAgentPersona[];
   executions: TaskExecution[];
@@ -303,4 +337,186 @@ export interface LLMEnhanceInput {
 export interface LLMEnhanceOutput {
   answer: string;
   confidenceDelta?: number;
+}
+
+export interface LLMTaskCatalogItem {
+  id: number;
+  name: string;
+  description: string;
+}
+
+export interface LLMTaskProposal extends LLMTaskCatalogItem {
+  difficulty?: '简单' | '中等' | '困难';
+  estimatedDuration?: string;
+  testScenario?: string;
+  operationSteps?: string[];
+  successCriteria?: string[];
+  tags?: string[];
+  evidenceRefs?: string[];
+  evidenceReason?: string;
+}
+
+export type SourceArtifactType =
+  | 'html'
+  | 'javascript'
+  | 'css'
+  | 'json'
+  | 'inline-script'
+  | 'text';
+
+export interface CollectedSourceFailure {
+  url: string;
+  reason: string;
+}
+
+export interface CollectedSourceArtifact {
+  artifactId: string;
+  url: string;
+  type: SourceArtifactType;
+  content: string;
+  hash: string;
+  bytes: number;
+  status: 'fetched' | 'failed';
+  error?: string;
+}
+
+export interface CollectedSourceBundle {
+  targetUrl: string;
+  finalUrl: string;
+  mainDocument: CollectedSourceArtifact;
+  artifacts: CollectedSourceArtifact[];
+  stats: {
+    artifactCount: number;
+    totalBytes: number;
+    durationMs: number;
+    failedArtifacts: CollectedSourceFailure[];
+  };
+}
+
+export interface PackagedCodeChunk {
+  chunkId: string;
+  artifactIds: string[];
+  content: string;
+  bytes: number;
+  tokenEstimate: number;
+}
+
+export interface PackagedCodeResult {
+  chunks: PackagedCodeChunk[];
+  chunkCount: number;
+  artifactCount: number;
+  totalBytes: number;
+  totalTokenEstimate: number;
+}
+
+export interface LLMCrawlStageInput {
+  targetUrl: string;
+  sourceBundle: CollectedSourceBundle;
+  packagedCode: PackagedCodeResult;
+}
+
+export interface LLMCrawlStageOutput {
+  finalUrl: string;
+  statusCode: number;
+  loadTimeMs: number;
+  title: string;
+  language: string;
+  summary: string;
+}
+
+export interface LLMStructureStageInput {
+  targetUrl: string;
+  sourceBundle: CollectedSourceBundle;
+  packagedCode: PackagedCodeResult;
+  crawl: LLMCrawlStageOutput;
+}
+
+export interface LLMStructureStageOutput {
+  summary: string;
+  pageSummary: LLMAnalysisInput['pageSummary'];
+}
+
+export interface LLMRiskStageInput {
+  targetUrl: string;
+  sourceBundle: CollectedSourceBundle;
+  packagedCode: PackagedCodeResult;
+  crawl: LLMCrawlStageOutput;
+  structure: LLMStructureStageOutput;
+}
+
+export interface LLMRiskStageOutput {
+  summary: string;
+  diagnosisItems: DiagnosisItem[];
+}
+
+export interface LLMTaskStageInput {
+  targetUrl: string;
+  sourceBundle: CollectedSourceBundle;
+  packagedCode: PackagedCodeResult;
+  crawl: LLMCrawlStageOutput;
+  structure: LLMStructureStageOutput;
+  risk: LLMRiskStageOutput;
+  taskCatalog: LLMTaskCatalogItem[];
+}
+
+export interface LLMTaskStageOutput {
+  summary: string;
+  prioritizedTaskIds: number[];
+  taskProposals: LLMTaskProposal[];
+}
+
+export interface LLMStageResult<T> {
+  output: T;
+  attempts: number;
+  repaired: boolean;
+  rawSnippet?: string;
+  degraded?: boolean;
+  quality?: {
+    autoFilledCount?: number;
+    syntheticCount?: number;
+    rewrittenNameCount?: number;
+    weakGateWarnings?: number;
+  };
+}
+
+export interface LLMStageError {
+  stage: 'crawl' | 'structure' | 'risk' | 'tasks';
+  attempt: number;
+  code: 'STAGE_SCHEMA_INVALID' | 'STAGE_TIMEOUT' | 'STAGE_PROVIDER_ERROR';
+  message: string;
+  rawSnippet?: string;
+}
+
+export interface LLMAnalysisInput {
+  targetUrl: string;
+  pageSummary: {
+    finalUrl: string;
+    title: string;
+    language: string;
+    statusCode: number;
+    loadTimeMs: number;
+    hasViewportMeta: boolean;
+    hasMainLandmark: boolean;
+    interactiveCount: number;
+    formsCount: number;
+    imagesCount: number;
+    imagesWithoutAlt: number;
+    headingsCount: number;
+    headingsText: string[];
+    primaryLinks: string[];
+    primaryButtons: string[];
+    primaryInputs: string[];
+    bodyPreview: string;
+    codeCapabilities: string[];
+    evidenceRefs: EvidenceRefItem[];
+    allowedEvidenceRefIds: string[];
+  };
+  heuristicDiagnosis: DiagnosisItem[];
+  taskCatalog: LLMTaskCatalogItem[];
+}
+
+export interface LLMAnalysisOutput {
+  diagnosisItems: DiagnosisItem[];
+  prioritizedTaskIds: number[];
+  taskProposals: LLMTaskProposal[];
 }

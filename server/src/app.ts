@@ -45,6 +45,13 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     evaluationMode: deps.env.evaluationMode,
     evaluatorTimeoutMs: deps.env.evaluatorTimeoutMs,
     evaluatorAllowInsecureTls: deps.env.evaluatorAllowInsecureTls,
+    diagnosisPipelineMode: deps.env.diagnosisPipelineMode,
+    sourceCollectSameOriginOnly: deps.env.sourceCollectSameOriginOnly,
+    sourceCollectMaxTotalBytes: deps.env.sourceCollectMaxTotalBytes,
+    llmChunkTokenBudget: deps.env.llmChunkTokenBudget,
+    strictTasks: deps.env.diagnosisStrictTasks,
+    taskBlacklist: deps.env.diagnosisTaskBlacklist,
+    llmAdapter: deps.llmAdapter,
   });
   await app.register(runsRoutes, { prefix: '/api/v1', runStore: deps.runStore });
   await app.register(reportRoutes, { prefix: '/api/v1', runStore: deps.runStore });

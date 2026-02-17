@@ -26,6 +26,23 @@ function buildSelectionMap(selections: AgentCategorySelection[]): Map<string, nu
 }
 
 function resolveTaskDetail(task: Task) {
+  if (task.testScenario || (task.operationSteps && task.operationSteps.length > 0) || (task.successCriteria && task.successCriteria.length > 0)) {
+    return {
+      taskId: task.id,
+      title: task.name,
+      difficulty: task.difficulty ?? '中等' as const,
+      estimatedDuration: task.estimatedDuration ?? '8-12分钟',
+      testScenario: task.testScenario ?? task.description,
+      operationSteps: task.operationSteps && task.operationSteps.length > 0
+        ? task.operationSteps
+        : ['定位功能入口', '执行关键操作', '验证系统反馈'],
+      successCriteria: task.successCriteria && task.successCriteria.length > 0
+        ? task.successCriteria
+        : ['流程可闭环完成', '反馈明确且可理解'],
+      tags: task.tags ?? ['API生成'],
+    };
+  }
+
   const detail = taskDetailTemplates[task.id];
   if (detail) {
     return detail;
@@ -70,9 +87,9 @@ export function TaskSelectionStep({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:min-h-[680px] items-stretch">
-        <div className="animate-slide-in-left flex" style={{ animationDelay: '100ms' }}>
-          <Card data-testid="task-selection-left-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch lg:min-h-[680px] lg:h-[72vh]">
+        <div className="animate-slide-in-left flex h-[56vh] md:h-[62vh] lg:h-full" style={{ animationDelay: '100ms' }}>
+          <Card data-testid="task-selection-left-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full overflow-hidden">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -92,7 +109,7 @@ export function TaskSelectionStep({
               </div>
             </CardHeader>
             <CardContent className="flex-1 min-h-0">
-              <div className="space-y-2 h-full overflow-y-auto pr-2">
+              <div className="space-y-2 h-full overflow-y-auto overscroll-contain pr-2">
                 {tasks.map((task, index) => (
                   <div
                     key={task.id}
@@ -177,8 +194,8 @@ export function TaskSelectionStep({
           </Card>
         </div>
 
-        <div className="animate-slide-in-right flex" style={{ animationDelay: '200ms' }}>
-          <Card data-testid="task-selection-right-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full">
+        <div className="animate-slide-in-right flex h-[56vh] md:h-[62vh] lg:h-full" style={{ animationDelay: '200ms' }}>
+          <Card data-testid="task-selection-right-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full overflow-hidden">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -196,7 +213,7 @@ export function TaskSelectionStep({
               </div>
             </CardHeader>
             <CardContent className="flex-1 min-h-0">
-              <div className="space-y-3 h-full overflow-y-auto pr-2">
+              <div className="space-y-3 h-full overflow-y-auto overscroll-contain pr-2">
                 {categoryTemplates.map((category, index) => {
                   const count = selectionMap.get(category.id) ?? 0;
                   return (

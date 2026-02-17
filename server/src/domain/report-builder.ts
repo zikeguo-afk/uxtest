@@ -59,7 +59,7 @@ export function buildQuantitativeMetrics(executions: TaskExecution[]): Quantitat
 
       return {
         taskId,
-        taskName: taskMap.get(taskId)?.name ?? `任务#${taskId}`,
+        taskName: list[0]?.taskName ?? taskMap.get(taskId)?.name ?? `任务#${taskId}`,
         successRate,
         bottleneck,
         emotionPeak,

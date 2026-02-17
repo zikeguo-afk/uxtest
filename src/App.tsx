@@ -31,7 +31,9 @@ function App() {
     currentStep,
     targetUrl,
     runtimeStatus,
+    analysisProgress,
     diagnosis,
+    taskGeneration,
     tasks,
     selectedTasks,
     categoryTemplates,
@@ -72,8 +74,12 @@ function App() {
             targetUrl={targetUrl}
             onUrlChange={updateUrl}
             onNext={async () => {
-              await generateDiagnosis();
               goToStep('analysis');
+              try {
+                await generateDiagnosis();
+              } catch {
+                // runtimeStatus already stores error details
+              }
             }}
           />
         );
@@ -82,7 +88,10 @@ function App() {
           <AnalysisStep
             targetUrl={targetUrl}
             diagnosis={diagnosis}
+            taskGeneration={taskGeneration}
             tasks={tasks}
+            analysisProgress={analysisProgress}
+            isAnalyzing={runtimeStatus.phase === 'analysis'}
             onNext={() => goToStep('task-selection')}
           />
         );

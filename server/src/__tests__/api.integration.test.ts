@@ -32,6 +32,14 @@ beforeAll(async () => {
       llmModel: 'gpt-4o-mini',
       llmTimeoutMs: 20_000,
       llmTemperature: 0.2,
+      llmStageRetryCount: 2,
+      llmJsonRepairCount: 1,
+      llmChunkTokenBudget: 1_600,
+      diagnosisPipelineMode: 'llm-4stage',
+      sourceCollectSameOriginOnly: true,
+      sourceCollectMaxTotalBytes: 2_500_000,
+      diagnosisStrictTasks: false,
+      diagnosisTaskBlacklist: ['购物车', '结账'],
     },
     runStore,
     llmAdapter: mockLLMAdapter,
@@ -55,7 +63,7 @@ describe('API integration', () => {
     expect(res.body.responsibilities.length).toBeGreaterThan(0);
   });
 
-  it('returns diagnosis items for target url', async () => {
+  it('returns diagnosis items and task list for target url', async () => {
     const res = await request(app.server)
       .post('/api/v1/diagnosis')
       .send({ targetUrl: 'https://example.com' });
@@ -63,6 +71,39 @@ describe('API integration', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.items)).toBe(true);
     expect(res.body.items.length).toBeGreaterThan(0);
+    expect(Array.isArray(res.body.tasks)).toBe(true);
+    expect(res.body.tasks.length).toBeGreaterThan(0);
+    expect(res.body.taskGeneration).toBeTruthy();
+    expect(res.body.taskGeneration.status).toBe('success');
+    expect(typeof res.body.source).toBe('string');
+  });
+
+  it('creates diagnosis job and returns progress/result', async () => {
+    const createRes = await request(app.server)
+      .post('/api/v1/diagnosis/jobs')
+      .send({ targetUrl: 'https://example.com' });
+
+    expect(createRes.status).toBe(200);
+    expect(typeof createRes.body.jobId).toBe('string');
+    expect(createRes.body.progress).toBeTruthy();
+    expect(Array.isArray(createRes.body.progress.stages)).toBe(true);
+
+    const jobId = createRes.body.jobId as string;
+    let status = '';
+    let latestBody: Record<string, unknown> = {};
+
+    for (let i = 0; i < 20; i += 1) {
+      const statusRes = await request(app.server).get(`/api/v1/diagnosis/jobs/${jobId}`);
+      expect(statusRes.status).toBe(200);
+      status = statusRes.body.status;
+      latestBody = statusRes.body as Record<string, unknown>;
+      if (status === 'completed' || status === 'failed') {
+        break;
+      }
+    }
+
+    expect(status).toBe('completed');
+    expect(latestBody.result).toBeTruthy();
   });
 
   it('rejects invalid run request with too few tasks', async () => {

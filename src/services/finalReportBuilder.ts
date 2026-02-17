@@ -7,6 +7,7 @@ import type {
   QuantitativeMetric,
   RepresentativeSample,
   ReportTemplateTier,
+  Task,
   TaskDetailCard,
   TaskPerformanceRow,
   TestRunSnapshot,
@@ -85,15 +86,68 @@ function resolveTier(overallSuccessRate: number): ReportTemplateTier {
   return 'needs-improvement';
 }
 
-function buildTaskDetails(selectedTaskIds: number[], tier: ReportTemplateTier): TaskDetailCard[] {
+function resolveTaskTitleMap(
+  runSnapshot: TestRunSnapshot | null,
+  metrics: QuantitativeMetric[],
+): Map<number, string> {
+  const titleMap = new Map<number, string>();
+
+  for (const metric of metrics) {
+    titleMap.set(metric.taskId, metric.taskName);
+  }
+
+  for (const execution of runSnapshot?.executions ?? []) {
+    if (!titleMap.has(execution.taskId)) {
+      titleMap.set(execution.taskId, execution.taskName);
+    }
+  }
+
+  return titleMap;
+}
+
+function resolveTaskCatalogMap(runSnapshot: TestRunSnapshot | null): Map<number, Task> {
+  const map = new Map<number, Task>();
+  for (const task of runSnapshot?.taskCatalog ?? []) {
+    if (!task) {
+      continue;
+    }
+    map.set(task.id, task);
+  }
+  return map;
+}
+
+function buildTaskDetails(
+  selectedTaskIds: number[],
+  tier: ReportTemplateTier,
+  taskTitleMap: Map<number, string>,
+  taskCatalogMap: Map<number, Task>,
+): TaskDetailCard[] {
   const template = reportTemplates[tier].taskDetailDefault;
 
   return selectedTaskIds.map((taskId) => {
     const detail = taskDetailTemplates[taskId];
+    const dynamicTitle = taskTitleMap.get(taskId);
+    const catalogTask = taskCatalogMap.get(taskId);
+    const dynamicScenario = catalogTask?.testScenario;
+    const dynamicOperationSteps = catalogTask?.operationSteps;
+    const dynamicSuccessCriteria = catalogTask?.successCriteria;
 
     if (detail) {
       return {
         ...detail,
+        title: dynamicTitle ?? detail.title,
+        difficulty: catalogTask?.difficulty ?? detail.difficulty,
+        estimatedDuration: catalogTask?.estimatedDuration ?? detail.estimatedDuration,
+        testScenario: dynamicScenario ?? detail.testScenario,
+        operationSteps:
+          dynamicOperationSteps && dynamicOperationSteps.length > 0
+            ? [...dynamicOperationSteps]
+            : detail.operationSteps,
+        successCriteria:
+          dynamicSuccessCriteria && dynamicSuccessCriteria.length > 0
+            ? [...dynamicSuccessCriteria]
+            : detail.successCriteria,
+        tags: catalogTask?.tags && catalogTask.tags.length > 0 ? [...catalogTask.tags] : detail.tags,
         taskCode: `T${taskId}`,
       };
     }
@@ -101,13 +155,19 @@ function buildTaskDetails(selectedTaskIds: number[], tier: ReportTemplateTier): 
     return {
       taskId,
       taskCode: `T${taskId}`,
-      title: taskNameMap.get(taskId) ?? `任务 ${taskId}`,
-      difficulty: template.difficulty,
-      estimatedDuration: template.estimatedDuration,
-      testScenario: template.testScenario,
-      operationSteps: [...template.operationSteps],
-      successCriteria: [...template.successCriteria],
-      tags: [...template.tags],
+      title: dynamicTitle ?? taskNameMap.get(taskId) ?? `任务 ${taskId}`,
+      difficulty: catalogTask?.difficulty ?? template.difficulty,
+      estimatedDuration: catalogTask?.estimatedDuration ?? template.estimatedDuration,
+      testScenario: dynamicScenario ?? template.testScenario,
+      operationSteps:
+        dynamicOperationSteps && dynamicOperationSteps.length > 0
+          ? [...dynamicOperationSteps]
+          : [...template.operationSteps],
+      successCriteria:
+        dynamicSuccessCriteria && dynamicSuccessCriteria.length > 0
+          ? [...dynamicSuccessCriteria]
+          : [...template.successCriteria],
+      tags: catalogTask?.tags && catalogTask.tags.length > 0 ? [...catalogTask.tags] : [...template.tags],
     };
   });
 }
@@ -220,7 +280,9 @@ export function buildFinalReportBundle({
   const tier = resolveTier(overallSuccessRate);
   const template = reportTemplates[tier];
   const selectedTaskIds = resolveTaskIds(runSnapshot, quantitativeMetrics);
-  const taskDetails = buildTaskDetails(selectedTaskIds, tier);
+  const taskTitleMap = resolveTaskTitleMap(runSnapshot, quantitativeMetrics);
+  const taskCatalogMap = resolveTaskCatalogMap(runSnapshot);
+  const taskDetails = buildTaskDetails(selectedTaskIds, tier, taskTitleMap, taskCatalogMap);
   const taskPerformance = buildTaskPerformanceRows(
     selectedTaskIds,
     taskDetails,

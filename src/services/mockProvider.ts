@@ -4,8 +4,9 @@ import { mockDiagnosis } from '@/data/mock/results';
 import { defaultTasks } from '@/data/mock/tasks';
 import { generateCohort } from '@/services/cohortGenerator';
 import { sampleExecutionPairs } from '@/services/executionSampler';
-import type { UXAgentProvider } from '@/services/uxAgentProvider';
+import type { DiagnosisRequestOptions, UXAgentProvider } from '@/services/uxAgentProvider';
 import type {
+  AnalysisProgressStatus,
   AgentCategorySelection,
   AgentEmotion,
   CategoryReportItem,
@@ -620,9 +621,64 @@ function summarizeGlobal(executions: TaskExecution[]): {
   };
 }
 
+function buildMockDiagnosisProgress(): AnalysisProgressStatus {
+  return {
+    jobId: `mock-diagnosis-${Date.now()}`,
+    status: 'completed',
+    percent: 100,
+    currentStageId: 'tasks',
+    message: '分析完成（mock）',
+    updatedAt: new Date().toISOString(),
+    stages: [
+      {
+        id: 'crawl',
+        label: '页面抓取',
+        detail: 'mock 模式：未执行真实页面抓取。',
+        status: 'done',
+        detailSource: 'runtime-log',
+      },
+      {
+        id: 'structure',
+        label: '结构解析',
+        detail: 'mock 模式：未执行真实结构解析。',
+        status: 'done',
+        detailSource: 'runtime-log',
+      },
+      {
+        id: 'risk',
+        label: '风险检查',
+        detail: 'mock 模式：未执行真实风险检查。',
+        status: 'done',
+        detailSource: 'runtime-log',
+      },
+      {
+        id: 'tasks',
+        label: '任务生成',
+        detail: 'mock 模式：任务为本地预设，仅用于测试。',
+        status: 'done',
+        detailSource: 'runtime-log',
+      },
+    ],
+  };
+}
+
 export const mockProvider: UXAgentProvider = {
-  getDiagnosis() {
-    return clone(mockDiagnosis);
+  getDiagnosis(_targetUrl, options?: DiagnosisRequestOptions) {
+    options?.onProgress?.(buildMockDiagnosisProgress());
+    return {
+      items: clone(mockDiagnosis),
+      tasks: clone(defaultTasks),
+      taskGeneration: {
+        status: 'success',
+        code: 'MOCK_TASKS',
+        message: 'mock 模式任务生成成功。',
+        blocked: false,
+        candidateCount: defaultTasks.length,
+        acceptedCount: defaultTasks.length,
+        rejectedCount: 0,
+      },
+      source: 'mock',
+    } as const;
   },
   createRunSnapshot(request: ExecutionRequest) {
     return clone(buildSnapshot(request));

@@ -15,6 +15,8 @@ async function bootstrap(): Promise<void> {
           model: env.llmModel,
           timeoutMs: env.llmTimeoutMs,
           temperature: env.llmTemperature,
+          stageRetryCount: env.llmStageRetryCount,
+          jsonRepairCount: env.llmJsonRepairCount,
         })
       : mockLLMAdapter;
 

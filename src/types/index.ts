@@ -15,8 +15,11 @@ export type ReportTemplateTier = 'excellent' | 'medium' | 'needs-improvement';
 export type TaskPerformanceStatus = 'healthy' | 'warning' | 'risk';
 
 export type MetricTone = 'positive' | 'neutral' | 'negative';
+export type EvidenceSource = 'dom' | 'interaction' | 'route-script' | 'text';
 
 export type RuntimePhase = 'idle' | 'analysis' | 'sampling' | 'reporting' | 'qa' | 'error';
+export type AnalysisJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type AnalysisStageStatus = 'pending' | 'running' | 'done' | 'error';
 
 export interface TraitProfile {
   patience: number;
@@ -29,12 +32,62 @@ export interface Task {
   name: string;
   description: string;
   selected: boolean;
+  difficulty?: '简单' | '中等' | '困难';
+  estimatedDuration?: string;
+  testScenario?: string;
+  operationSteps?: string[];
+  successCriteria?: string[];
+  tags?: string[];
+  evidenceRefs?: string[];
+  evidenceReason?: string;
 }
 
 export interface DiagnosisItem {
   dimension: string;
   status: 'success' | 'warning' | 'error';
   description: string;
+}
+
+export interface TaskGenerationStatus {
+  status: 'success' | 'degraded' | 'failed';
+  code: string;
+  message: string;
+  blocked: boolean;
+  candidateCount?: number;
+  acceptedCount?: number;
+  rejectedCount?: number;
+  quality?: {
+    autoFilledCount?: number;
+    syntheticCount?: number;
+    rewrittenNameCount?: number;
+    weakGateWarnings?: number;
+  };
+}
+
+export interface EvidenceRefItem {
+  refId: string;
+  source: EvidenceSource;
+  label: string;
+  excerpt: string;
+}
+
+export interface AnalysisProgressStage {
+  id: 'crawl' | 'structure' | 'risk' | 'tasks';
+  label: string;
+  detail: string;
+  status: AnalysisStageStatus;
+  detailSource?: 'runtime-log' | 'llm-summary';
+  detailRaw?: string;
+}
+
+export interface AnalysisProgressStatus {
+  jobId: string;
+  status: AnalysisJobStatus;
+  percent: number;
+  currentStageId: AnalysisProgressStage['id'] | null;
+  stages: AnalysisProgressStage[];
+  message: string;
+  updatedAt: string;
 }
 
 export interface AgentCategoryTemplate {
@@ -94,6 +147,7 @@ export interface TaskExecution {
 export interface ExecutionRequest {
   targetUrl?: string;
   selectedTaskIds: number[];
+  taskCatalog?: Array<Omit<Task, 'selected'>>;
   categorySelections: AgentCategorySelection[];
   maxCases: number;
 }
@@ -159,6 +213,7 @@ export interface TestRunSnapshot {
   createdAt: string;
   targetUrl?: string;
   selectedTaskIds: number[];
+  taskCatalog?: Task[];
   categorySelections: AgentCategorySelection[];
   generatedAgents: GeneratedAgentPersona[];
   executions: TaskExecution[];
@@ -303,6 +358,7 @@ export interface AppState {
   currentStep: Step;
   targetUrl: string;
   runtimeStatus: RuntimeStatus;
+  analysisProgress: AnalysisProgressStatus | null;
   diagnosis: DiagnosisItem[];
   tasks: Task[];
   selectedTasks: number[];

@@ -7,6 +7,7 @@ import { healthRoutes } from './routes/health';
 import { questionsRoutes } from './routes/questions';
 import { reportRoutes } from './routes/report';
 import { runsRoutes } from './routes/runs';
+import { taskGeneratorRoutes } from './routes/task-generator';
 import type { EnvConfig } from './config/env';
 import type { LLMAdapter } from './llm/adapter';
 import { RunStore } from './store/run-store';
@@ -52,6 +53,11 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     prefix: '/api/v1',
     runStore: deps.runStore,
     llmAdapter: deps.llmAdapter,
+  });
+  await app.register(taskGeneratorRoutes, {
+    prefix: '/api/v1',
+    evaluatorTimeoutMs: deps.env.evaluatorTimeoutMs,
+    evaluatorAllowInsecureTls: deps.env.evaluatorAllowInsecureTls,
   });
 
   return app;

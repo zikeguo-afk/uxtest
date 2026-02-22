@@ -60,6 +60,13 @@ export interface TaskGenerationStatus {
     syntheticCount?: number;
     rewrittenNameCount?: number;
     weakGateWarnings?: number;
+    llmCompletionPasses?: number;
+    llmGeneratedCount?: number;
+    nonLlmGeneratedCount?: number;
+    nameRewrittenCount?: number;
+    nameReadableCount?: number;
+    namePolishPasses?: number;
+    nameJargonRejectedCount?: number;
   };
 }
 
@@ -476,6 +483,13 @@ export interface LLMStageResult<T> {
     syntheticCount?: number;
     rewrittenNameCount?: number;
     weakGateWarnings?: number;
+    llmCompletionPasses?: number;
+    llmGeneratedCount?: number;
+    nonLlmGeneratedCount?: number;
+    nameRewrittenCount?: number;
+    nameReadableCount?: number;
+    namePolishPasses?: number;
+    nameJargonRejectedCount?: number;
   };
 }
 

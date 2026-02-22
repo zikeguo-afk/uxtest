@@ -49,13 +49,13 @@ const defaultRisk = [
 ].join('\n');
 const defaultTasks = [
     '你是 UXAgent 的任务生成器（Task Stage）。',
-    '任务目标：基于系统功能分析，设计一套完整的可用性测试任务。',
+    '任务目标：基于网页源码与结构证据，设计完整的可用性测试任务。',
     '输入里已包含：structure.pageSummary、risk.diagnosisItems、taskCatalog、allowedEvidenceRefIds。',
     '设计原则：',
-    '1) 任务覆盖：每个核心功能至少对应一个测试任务，覆盖正常流程与边界情况，同时包含独立任务与串联任务。',
-    '2) 难度分级：简单任务（3-5分钟）基础功能一步完成；中等任务（5-10分钟）组合功能多步操作；困难任务（10-15分钟）复杂场景需要理解。',
-    '3) 场景设计：每个任务包含真实测试场景，描述用户身份、目标与情境，帮助测试者理解背景。',
-    '4) 评估标准：每个任务包含 3-5 条可客观判定的成功标准，覆盖主要路径与替代路径。',
+    '1) 先识别网页功能集合（入口、关键操作、结果反馈、异常路径），再映射任务。',
+    '2) 任务名使用中文“目标结果名”，让非技术用户一眼看懂；不要“用户完成”前缀。',
+    '3) 每个任务步骤必须体现“先访问入口 -> 再执行操作 -> 再确认成功”。',
+    '4) 任务可做合理推断，但必须能被当前源码证据支持。',
     '硬性要求：',
     '1) 只返回 JSON，不要 Markdown、不要额外解释。',
     '2) prioritizedTaskIds 必须来自 taskCatalog.id。',
@@ -65,8 +65,24 @@ const defaultTasks = [
     '6) 必须输出 15 条任务（不少于也不多于 15 条），并优先覆盖 prioritizedTaskIds 前列。',
     '7) 若局部字段不确定，请基于当前页面能力做合理补全；不要留空字段。',
     '8) 禁止默认电商术语（购物车/结账/下单/支付等），除非输入证据明确出现。',
-    '9) task name 必须是中文，且采用“用户操作任务”表达，禁止使用 API/DOM/JSON/脚本 等代码术语命名。',
-    '输出模板：{"summary":"...","prioritizedTaskIds":[1,2,3],"taskProposals":[{"id":1,"name":"用户完成...","description":"...","difficulty":"中等","estimatedDuration":"8-12分钟","testScenario":"...","operationSteps":["...","...","..."],"successCriteria":["...","..."],"tags":["..."],"evidenceRefs":["interaction:button-1"],"evidenceReason":"..."}]}',
+    '9) task name 仅保留页面可见产品词，不使用实现术语（React/Zustand/DOM/API/JSON/Route 等），除非输入证据显示该词就是页面可见词。',
+    '10) task name 示例：完成首次页面加载、切换视角并确认效果、保存并导出草图。',
+    '输出模板：{"summary":"...","prioritizedTaskIds":[1,2,3],"taskProposals":[{"id":1,"name":"完成首次页面加载","description":"...","difficulty":"中等","estimatedDuration":"8-12分钟","testScenario":"...","operationSteps":["访问项目列表页并定位入口","执行关键操作并提交","确认结果反馈可见"],"successCriteria":["可成功完成创建","结果反馈清晰"],"tags":["..."],"evidenceRefs":["interaction:button-1"],"evidenceReason":"..."}]}',
+].join('\n');
+
+const defaultTasksCompletion = [
+    '你是 UXAgent 的任务补全器（Task Completion Stage）。',
+    '目标：在已有任务基础上补齐缺字段与缺失任务，最终返回完整 15 条任务。',
+    '输入包含：existingTaskProposals、missingFields、missingCount、pageSummary、risk、taskCatalog、allowedEvidenceRefIds。',
+    '硬性要求：',
+    '1) 只返回 JSON，不要 Markdown。',
+    '2) 输出格式与 Task Stage 一致：summary/prioritizedTaskIds/taskProposals。',
+    '3) taskProposals 必须完整包含字段：id/name/description/difficulty/estimatedDuration/testScenario/operationSteps/successCriteria/tags/evidenceRefs/evidenceReason。',
+    '4) operationSteps 至少 3 步，必须体现访问入口->执行->确认成功。',
+    '5) successCriteria 至少 2 条，evidenceRefs 仅能来自 allowedEvidenceRefIds。',
+    '6) task name 使用中文“目标结果名”，不要“用户完成”前缀，不使用实现术语。',
+    '7) 最终必须输出 15 条任务；若无法满足，不要编造无关任务。',
+    '输出模板：{"summary":"...","prioritizedTaskIds":[1,2,3],"taskProposals":[{"id":1,"name":"切换视角并确认效果","description":"...","difficulty":"中等","estimatedDuration":"8-12分钟","testScenario":"...","operationSteps":["进入模型设置入口","执行切换并提交","核对预览结果"],"successCriteria":["模型切换成功","预览结果可确认"],"tags":["..."],"evidenceRefs":["interaction:button-1"],"evidenceReason":"..."}]}',
 ].join('\n');
 const defaultRepair = [
     '你是 JSON 修复器。',
@@ -81,5 +97,6 @@ export const LLM_STAGE_PROMPTS = {
   structure: loadPromptFromEnv('LLM_PROMPT_STAGE_STRUCTURE_PATH', defaultStructure),
   risk: loadPromptFromEnv('LLM_PROMPT_STAGE_RISK_PATH', defaultRisk),
   tasks: loadPromptFromEnv('LLM_PROMPT_STAGE_TASKS_PATH', defaultTasks),
+  tasksCompletion: loadPromptFromEnv('LLM_PROMPT_STAGE_TASKS_COMPLETION_PATH', defaultTasksCompletion),
   repair: loadPromptFromEnv('LLM_PROMPT_REPAIR_PATH', defaultRepair),
 } as const;

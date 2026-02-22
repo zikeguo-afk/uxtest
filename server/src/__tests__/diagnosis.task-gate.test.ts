@@ -127,8 +127,8 @@ function createFifteenUserTaskProposals() {
     const taskId = index + 1;
     return {
       id: taskId,
-      name: `用户完成流程任务${taskId}`,
-      description: `让用户完成第${taskId}项页面操作流程并确认反馈是否清晰。`,
+      name: `完成页面流程任务${taskId}`,
+      description: `执行第${taskId}项页面操作流程并确认反馈是否清晰。`,
       difficulty: taskId % 3 === 0 ? ('困难' as const) : taskId % 2 === 0 ? ('中等' as const) : ('简单' as const),
       estimatedDuration: '8-12分钟',
       testScenario: `你是业务用户，需要在页面中完成第${taskId}项操作并确认结果。`,
@@ -319,10 +319,13 @@ describe('Diagnosis task quality gate', () => {
       expect(res.body.taskGeneration.blocked).toBe(false);
       expect(res.body.tasks.length).toBe(15);
       expect(res.body.tasks[0].evidenceRefs).toContain('route-script:capability-1');
+      expect(String(res.body.tasks[0].name)).not.toContain('用户完成');
+      expect(String(res.body.tasks[0].name)).not.toMatch(/执行.+流程/u);
+      expect(String(res.body.tasks[0].name)).not.toMatch(/react|zustand|state management/i);
     });
   });
 
-  it('weak-gate allows mixed refs and auto-fills remaining tasks to fixed 15', async () => {
+  it('blocks when accepted tasks are fewer than required 15 and no local fill is allowed', async () => {
     inspectLiveUrlMock.mockResolvedValue(createAnalysisFixture());
     buildLiveDiagnosisMock.mockReturnValue(createDiagnosisFixture());
 
@@ -371,11 +374,11 @@ describe('Diagnosis task quality gate', () => {
         .send({ targetUrl: 'https://example.com' });
 
       expect(res.status).toBe(200);
-      expect(res.body.source).toBe('llm');
-      expect(res.body.taskGeneration.status).toBe('degraded');
-      expect(res.body.taskGeneration.blocked).toBe(false);
-      expect(res.body.tasks).toHaveLength(15);
-      expect((res.body.taskGeneration.quality?.syntheticCount ?? 0) > 0).toBe(true);
+      expect(res.body.source).toBe('diagnosis-only');
+      expect(res.body.taskGeneration.status).toBe('failed');
+      expect(res.body.taskGeneration.blocked).toBe(true);
+      expect(res.body.taskGeneration.code).toBe('INSUFFICIENT_LLM_TASKS');
+      expect(res.body.tasks).toHaveLength(0);
     });
   });
 

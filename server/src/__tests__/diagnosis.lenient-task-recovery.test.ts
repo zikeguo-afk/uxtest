@@ -105,8 +105,8 @@ function createTaskStageInput(): LLMTaskStageInput {
     },
     taskCatalog: Array.from({ length: 15 }, (_, index) => ({
       id: index + 1,
-      name: `用户任务${index + 1}：主流程验证`,
-      description: `用户完成第 ${index + 1} 项主流程操作`,
+      name: `完成主流程步骤${index + 1}`,
+      description: `验证第 ${index + 1} 项主流程操作路径`,
     })),
   };
 }
@@ -117,7 +117,7 @@ describe('diagnosis lenient task recovery', () => {
     vi.unstubAllGlobals();
   });
 
-  it('auto-fills missing fields and returns fixed 15 tasks in degraded mode', async () => {
+  it('runs second LLM completion pass and returns fixed 15 tasks in degraded mode', async () => {
     const invalidPayload = {
       summary: 'partial payload',
       prioritizedTaskIds: [1, 2, 3],
@@ -134,11 +134,30 @@ describe('diagnosis lenient task recovery', () => {
       ],
     };
 
+    const completionPayload = {
+      summary: 'completion payload',
+      prioritizedTaskIds: Array.from({ length: 15 }, (_, index) => index + 1),
+      taskProposals: Array.from({ length: 15 }, (_, index) => ({
+        id: index + 1,
+        name: `完成核心流程步骤${index + 1}`,
+        description: `验证第 ${index + 1} 项核心流程是否可达并可闭环完成。`,
+        difficulty: index % 3 === 0 ? '困难' : index % 2 === 0 ? '中等' : '简单',
+        estimatedDuration: '8-12分钟',
+        testScenario: `你正在执行第 ${index + 1} 项流程，需从入口进入并确认结果。`,
+        operationSteps: ['访问功能入口', '执行关键操作并提交', '核对反馈并确认成功'],
+        successCriteria: ['流程可独立完成', '结果反馈可理解且可确认'],
+        tags: ['流程验证', '自动生成'],
+        evidenceRefs: ['interaction:button-1'],
+        evidenceReason: '按钮交互证据可支撑该流程任务。',
+      })),
+    };
+
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(createChatResponse(invalidPayload))
       .mockResolvedValueOnce(createChatResponse(invalidPayload))
-      .mockResolvedValueOnce(createChatResponse(invalidPayload));
+      .mockResolvedValueOnce(createChatResponse(invalidPayload))
+      .mockResolvedValueOnce(createChatResponse(completionPayload));
     vi.stubGlobal('fetch', fetchMock);
 
     const adapter = createOpenAICompatibleAdapter({
@@ -154,11 +173,17 @@ describe('diagnosis lenient task recovery', () => {
     const result = await adapter.runTaskStage(createTaskStageInput());
     expect(result.degraded).toBe(true);
     expect(result.output.taskProposals).toHaveLength(15);
-    expect(result.output.taskProposals[0]?.name).toMatch(/用户/);
+    expect(result.output.taskProposals[0]?.name).not.toContain('用户完成');
+    expect(result.output.taskProposals.every((task) => task.name.includes('用户完成'))).toBe(false);
+    expect(result.output.taskProposals.every((task) => !/执行.+流程/u.test(task.name))).toBe(true);
+    expect(result.output.taskProposals.every((task) => !/react|zustand|state management/i.test(task.name))).toBe(true);
     expect(result.output.taskProposals[0]?.operationSteps?.length).toBeGreaterThanOrEqual(3);
     expect(result.output.taskProposals[0]?.successCriteria?.length).toBeGreaterThanOrEqual(2);
-    expect(result.quality?.autoFilledCount ?? 0).toBeGreaterThan(0);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.quality?.llmCompletionPasses).toBe(1);
+    expect(result.quality?.llmGeneratedCount).toBe(15);
+    expect(result.quality?.nonLlmGeneratedCount).toBe(0);
+    expect(result.quality?.namePolishPasses).toBeGreaterThanOrEqual(1);
+    expect(result.quality?.nameReadableCount).toBeGreaterThan(0);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
-

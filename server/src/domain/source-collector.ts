@@ -18,6 +18,24 @@ export interface SourceCollectOptions {
   maxTotalBytes: number;
 }
 
+function getErrorCode(error: unknown): string {
+  if (!(error instanceof Error) || typeof error.cause !== 'object' || error.cause === null) {
+    return '';
+  }
+  if (!('code' in error.cause)) {
+    return '';
+  }
+  return String((error.cause as { code?: unknown }).code ?? '').trim();
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    const code = getErrorCode(error);
+    return code ? `${error.message} (${code})` : error.message;
+  }
+  return 'unknown error';
+}
+
 function normalizeTargetUrl(raw: string): string {
   const value = raw.trim();
   if (!value) {
@@ -58,6 +76,43 @@ function isTlsCertificateError(error: unknown): boolean {
   return knownCodes.some((code) => text.includes(code));
 }
 
+function isRetriableFetchError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const causeCode = getErrorCode(error).toUpperCase();
+  const retriableCodes = new Set([
+    'ETIMEDOUT',
+    'ESOCKETTIMEDOUT',
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'EAI_AGAIN',
+    'ENOTFOUND',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_SOCKET',
+  ]);
+  if (retriableCodes.has(causeCode)) {
+    return true;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('fetch failed') ||
+    message.includes('network') ||
+    message.includes('socket') ||
+    message.includes('timeout') ||
+    message.includes('temporarily unavailable')
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
+  });
+}
+
 async function fetchWithTlsFallback(
   url: string,
   init: NodeFetchInit,
@@ -81,6 +136,40 @@ async function fetchWithTlsFallback(
       await insecureAgent.close();
     }
   }
+}
+
+async function fetchWithRetry(
+  url: string,
+  init: NodeFetchInit,
+  allowInsecureTls: boolean,
+  options: { maxAttempts?: number; backoffMs?: number } = {},
+): Promise<Response> {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+  const backoffMs = Math.max(0, options.backoffMs ?? 300);
+  const attemptErrors: string[] = [];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetchWithTlsFallback(url, init, allowInsecureTls);
+    } catch (error) {
+      attemptErrors.push(`第${attempt}次: ${getErrorMessage(error)}`);
+      if (attempt >= maxAttempts || !isRetriableFetchError(error)) {
+        break;
+      }
+      await sleep(backoffMs * attempt);
+    }
+  }
+
+  if (/^https:\/\//i.test(url)) {
+    const httpUrl = `http://${url.slice('https://'.length)}`;
+    try {
+      return await fetchWithTlsFallback(httpUrl, init, allowInsecureTls);
+    } catch (error) {
+      attemptErrors.push(`HTTP回退: ${getErrorMessage(error)}`);
+    }
+  }
+
+  throw new Error(`网络抓取失败：${attemptErrors.join('；') || '未知网络错误'}`);
 }
 
 function looksTextualContentType(contentType: string): boolean {
@@ -192,7 +281,7 @@ export async function collectSourceBundle(
 
   let mainResponse: Response;
   try {
-    mainResponse = await fetchWithTlsFallback(
+    mainResponse = await fetchWithRetry(
       normalizedUrl,
       {
         method: 'GET',
@@ -201,9 +290,14 @@ export async function collectSourceBundle(
         headers: {
           'user-agent': REQUEST_UA,
           accept: 'text/html,application/xhtml+xml,text/plain,*/*',
+          'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
         },
       },
       options.allowInsecureTls,
+      {
+        maxAttempts: 3,
+        backoffMs: 350,
+      },
     );
   } finally {
     clearTimeout(mainTimer);
@@ -260,7 +354,7 @@ export async function collectSourceBundle(
       );
       let response: Response;
       try {
-        response = await fetchWithTlsFallback(
+        response = await fetchWithRetry(
           resourceUrl,
           {
             method: 'GET',
@@ -269,9 +363,14 @@ export async function collectSourceBundle(
             headers: {
               'user-agent': REQUEST_UA,
               accept: 'application/javascript,text/css,application/json,text/plain,*/*',
+              'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
             },
           },
           options.allowInsecureTls,
+          {
+            maxAttempts: 2,
+            backoffMs: 200,
+          },
         );
       } finally {
         clearTimeout(timer);
@@ -318,7 +417,7 @@ export async function collectSourceBundle(
         status: 'fetched',
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown fetch error';
+      const message = getErrorMessage(error);
       failures.push(buildFailedArtifact(resourceUrl, message));
     }
   }

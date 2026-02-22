@@ -133,7 +133,11 @@ function createTaskStageInput(): LLMTaskStageInput {
         },
       ],
     },
-    taskCatalog: [{ id: 1, name: '提交流程验证', description: '验证提交路径' }],
+    taskCatalog: Array.from({ length: 15 }, (_, index) => ({
+      id: index + 1,
+      name: `完成提交流程步骤${index + 1}`,
+      description: `验证提交流程第 ${index + 1} 个关键路径`,
+    })),
   };
 }
 
@@ -190,22 +194,20 @@ describe('llm-4stage retry behavior', () => {
 
     const validPayload = {
       summary: 'retry success',
-      prioritizedTaskIds: [1],
-      taskProposals: [
-        {
-          id: 1,
-          name: '提交流程验证',
-          description: '验证提交路径',
-          difficulty: '中等',
-          estimatedDuration: '8-12分钟',
-          testScenario: '用户提交一次请求',
-          operationSteps: ['进入页面', '执行提交动作', '确认返回结果'],
-          successCriteria: ['提交成功', '结果可确认'],
-          tags: ['提交'],
-          evidenceRefs: ['text:body-1'],
-          evidenceReason: '页面正文可证明存在提交流程。',
-        },
-      ],
+      prioritizedTaskIds: Array.from({ length: 15 }, (_, index) => index + 1),
+      taskProposals: Array.from({ length: 15 }, (_, index) => ({
+        id: index + 1,
+        name: `完成提交流程步骤${index + 1}`,
+        description: `验证第 ${index + 1} 项提交路径`,
+        difficulty: index % 3 === 0 ? '困难' : index % 2 === 0 ? '中等' : '简单',
+        estimatedDuration: '8-12分钟',
+        testScenario: `你需要完成第 ${index + 1} 项提交流程并确认反馈。`,
+        operationSteps: ['进入功能入口', '执行提交动作', '确认返回结果'],
+        successCriteria: ['提交成功', '结果可确认'],
+        tags: ['提交'],
+        evidenceRefs: ['text:body-1'],
+        evidenceReason: '页面正文可证明存在提交流程。',
+      })),
     };
 
     const fetchMock = vi
@@ -226,22 +228,24 @@ describe('llm-4stage retry behavior', () => {
 
     const result = await adapter.runTaskStage(createTaskStageInput());
     expect(result.attempts).toBe(2);
+    expect(result.output.taskProposals).toHaveLength(15);
     expect(result.output.taskProposals[0]?.operationSteps?.length).toBeGreaterThanOrEqual(3);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('returns degraded task output after schema retries are exhausted', async () => {
-    const invalidPayload = {
-      summary: 'still invalid',
+  it('fails when two LLM passes still cannot produce 15 tasks', async () => {
+    const partialPayload = {
+      summary: 'partial only',
       prioritizedTaskIds: [1],
       taskProposals: [
         {
           id: 1,
-          name: '提交流程验证',
+          name: '完成提交流程验证',
           description: '验证提交路径',
           difficulty: '中等',
           estimatedDuration: '8-12分钟',
           testScenario: '用户提交一次请求',
+          operationSteps: ['进入页面', '执行提交', '确认结果'],
           successCriteria: ['提交成功', '结果可确认'],
           tags: ['提交'],
           evidenceRefs: ['text:body-1'],
@@ -252,9 +256,8 @@ describe('llm-4stage retry behavior', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(createChatResponse(invalidPayload))
-      .mockResolvedValueOnce(createChatResponse(invalidPayload))
-      .mockResolvedValueOnce(createChatResponse(invalidPayload));
+      .mockResolvedValueOnce(createChatResponse(partialPayload))
+      .mockResolvedValueOnce(createChatResponse(partialPayload));
     vi.stubGlobal('fetch', fetchMock);
 
     const adapter = createOpenAICompatibleAdapter({
@@ -263,16 +266,12 @@ describe('llm-4stage retry behavior', () => {
       model: 'glm-4.7',
       timeoutMs: 10_000,
       temperature: 0.2,
-      stageRetryCount: 2,
+      stageRetryCount: 0,
       jsonRepairCount: 0,
     });
 
-    const result = await adapter.runTaskStage(createTaskStageInput());
-    expect(result.degraded).toBe(true);
-    expect(result.quality?.autoFilledCount ?? 0).toBeGreaterThan(0);
-    expect(result.output.taskProposals.length).toBeGreaterThanOrEqual(1);
-    expect(result.output.taskProposals[0]?.operationSteps?.length).toBeGreaterThanOrEqual(3);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await expect(adapter.runTaskStage(createTaskStageInput())).rejects.toThrow(/任务数量不足|LLM completion/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('blocks diagnosis flow when task stage keeps failing after retries', async () => {

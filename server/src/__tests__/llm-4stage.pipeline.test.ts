@@ -84,8 +84,8 @@ function createLlm4StageAdapter(): LLMAdapter {
   const prioritizedTaskIds = Array.from({ length: 15 }, (_, index) => index + 1);
   const generatedTaskProposals = prioritizedTaskIds.map((taskId) => ({
     id: taskId,
-    name: `用户完成核心流程任务${taskId}`,
-    description: `让用户在真实页面中完成第${taskId}项核心流程操作，并确认结果反馈。`,
+    name: `完成核心流程任务${taskId}`,
+    description: `在真实页面中完成第${taskId}项核心流程操作，并确认结果反馈。`,
     difficulty: taskId % 3 === 0 ? ('困难' as const) : taskId % 2 === 0 ? ('中等' as const) : ('简单' as const),
     estimatedDuration: '8-12分钟',
     testScenario: `你是首次使用该页面的用户，需要完成第${taskId}项流程操作并确认输出是否正确。`,
@@ -242,6 +242,8 @@ describe('llm-4stage diagnosis pipeline', () => {
     expect(payload.taskGeneration.blocked).toBe(false);
     expect(Array.isArray(payload.tasks)).toBe(true);
     expect(payload.tasks.length).toBe(15);
+    expect(payload.tasks.every((task: { name: string }) => !/执行.+流程/u.test(task.name))).toBe(true);
+    expect(payload.tasks.every((task: { name: string }) => !/react|zustand|state management/i.test(task.name))).toBe(true);
     expect(collectSourceBundleMock).toHaveBeenCalledTimes(1);
 
     await app.close();

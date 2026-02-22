@@ -395,7 +395,7 @@ describe('Diagnosis progress detail', () => {
       const progress = (latest as { progress: { stages: Array<Record<string, unknown>> } }).progress;
       const taskStage = progress.stages.find((stage) => stage.id === 'tasks');
       expect(taskStage).toBeTruthy();
-      expect(taskStage?.status).toBe('done');
+      expect(taskStage?.status).toBe('error');
 
       const taskDetailRaw = String(taskStage?.detailRaw ?? '');
       const taskRaw = JSON.parse(taskDetailRaw) as {
@@ -403,17 +403,22 @@ describe('Diagnosis progress detail', () => {
         unresolvedEvidenceRefs?: string[];
         warningCount?: number;
         syntheticCount?: number;
+        missingCount?: number;
       };
       expect(taskRaw.repairedEvidenceRefCount).toBeTypeOf('number');
       expect(Array.isArray(taskRaw.unresolvedEvidenceRefs)).toBe(true);
       expect(taskRaw.unresolvedEvidenceRefs).toContain('route');
       expect(taskRaw.warningCount).toBeTypeOf('number');
       expect(taskRaw.syntheticCount).toBeTypeOf('number');
+      expect(taskRaw.missingCount).toBeTypeOf('number');
 
-      const result = (latest as { result?: { taskGeneration?: { status?: string }; tasks?: unknown[] } }).result;
-      expect(result?.taskGeneration?.status).toBe('degraded');
+      const result = (
+        latest as { result?: { taskGeneration?: { status?: string; blocked?: boolean }; tasks?: unknown[] } }
+      ).result;
+      expect(result?.taskGeneration?.status).toBe('failed');
+      expect(result?.taskGeneration?.blocked).toBe(true);
       expect(Array.isArray(result?.tasks)).toBe(true);
-      expect((result?.tasks ?? []).length).toBe(15);
+      expect((result?.tasks ?? []).length).toBe(0);
     } finally {
       runStore.close();
       await app.close();

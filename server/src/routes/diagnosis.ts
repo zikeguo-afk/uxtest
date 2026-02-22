@@ -660,13 +660,51 @@ function buildTaskCatalog() {
 
 function buildUserOperationTaskCatalog(capabilityCandidates: string[]) {
   const fallbackCapabilities = capabilityCandidates.length > 0 ? capabilityCandidates : ['核心流程操作'];
+
+  const normalizeCapability = (input: string): string => {
+    const normalized = input
+      .replace(/^(按钮交互|导航链接|输入控件|内容模块)[:：]/u, '')
+      .replace(/client[-\s]?side rendering/giu, '页面加载')
+      .replace(/state management/giu, '状态设置')
+      .replace(/graph visualization/giu, '图形视图')
+      .replace(/image generation simulation/giu, '图片生成')
+      .replace(/react|zustand|api|dom|json|schema|script|route|hook/giu, '')
+      .replace(/接口|脚本|代码|路由|组件|函数/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return normalized || '核心流程';
+  };
+
+  const buildTaskName = (dimension: string, capability: string): string => {
+    const normalizedCapability = normalizeCapability(capability);
+    const nameByDimension: Record<string, string> = {
+      入口定位: `找到${normalizedCapability}入口`,
+      首次上手: `完成首次${normalizedCapability}`,
+      主流程完成: `完成${normalizedCapability}关键任务`,
+      关键参数调整: `调整${normalizedCapability}并确认效果`,
+      结果确认: `查看${normalizedCapability}结果`,
+      异常恢复: `恢复${normalizedCapability}异常状态`,
+      中断后继续: `恢复中断并继续${normalizedCapability}`,
+      状态反馈理解: `确认${normalizedCapability}反馈提示`,
+      页面导航切换: `切换${normalizedCapability}页面导航`,
+      筛选与查找: `查找${normalizedCapability}内容`,
+      帮助与说明使用: `查看${normalizedCapability}帮助说明`,
+      批量处理: `批量处理${normalizedCapability}内容`,
+      导出与分享: `导出${normalizedCapability}结果`,
+      设置与个性化: `调整${normalizedCapability}显示设置`,
+      退出与收尾: `完成${normalizedCapability}收尾操作`,
+    };
+    return nameByDimension[dimension] ?? `完成${normalizedCapability}操作`;
+  };
+
   return Array.from({ length: REQUIRED_TASK_SUGGESTION_COUNT }, (_, index) => {
     const capability = fallbackCapabilities[index % fallbackCapabilities.length] ?? `核心能力-${index + 1}`;
     const dimension = USER_OPERATION_DIMENSIONS[index % USER_OPERATION_DIMENSIONS.length];
+    const normalizedCapability = normalizeCapability(capability);
     return {
       id: index + 1,
-      name: `用户任务${index + 1}：${dimension}${capability}`,
-      description: `让真实用户围绕「${capability}」完成${dimension}相关操作，观察是否能顺利完成并确认结果。`,
+      name: buildTaskName(dimension, normalizedCapability),
+      description: `围绕「${normalizedCapability}」完成真实使用场景操作，确认入口可达、操作可完成、结果可看懂。`,
     };
   });
 }
@@ -676,40 +714,12 @@ function buildDynamicTaskCatalog(analysis: LiveUrlAnalysis) {
   return buildUserOperationTaskCatalog(capabilityCandidates);
 }
 
-function createAutoFilledTaskFromCatalogItem(
-  item: { id: number; name: string; description: string },
-  analysis: LiveUrlAnalysis,
-): Task {
-  const taskName = item.name.replace(/^用户任务\d+[:：]?\s*/u, '').trim() || item.name;
-  return {
-    id: item.id,
-    name: taskName.startsWith('用户') ? taskName : `用户完成${taskName}操作`,
-    description: item.description,
-    selected: false,
-    difficulty: '中等',
-    estimatedDuration: '8-12分钟',
-    testScenario: `你正在使用「${analysis.title}」，请完成「${taskName}」并确认是否顺利完成。`,
-    operationSteps: [
-      `打开并定位「${taskName}」相关入口`,
-      `按页面提示完成「${taskName}」操作`,
-      '检查系统反馈并确认结果',
-    ],
-    successCriteria: [
-      `用户可以独立完成「${taskName}」`,
-      '系统反馈明确，结果可被确认',
-    ],
-    tags: ['自动补全', '用户任务'],
-  };
-}
-
 function ensureFifteenTasks(
   tasks: Task[],
-  analysis: LiveUrlAnalysis,
-  baseCatalog: Array<{ id: number; name: string; description: string }>,
 ): {
   tasks: Task[];
-  syntheticCount: number;
   droppedCount: number;
+  missingCount: number;
 } {
   const used = new Set<number>();
   const ordered: Task[] = [];
@@ -729,25 +739,46 @@ function ensureFifteenTasks(
     });
   }
 
-  let syntheticCount = 0;
-  for (const catalogItem of baseCatalog) {
-    if (ordered.length >= REQUIRED_TASK_SUGGESTION_COUNT) {
-      break;
-    }
-    if (used.has(catalogItem.id)) {
-      continue;
-    }
-    used.add(catalogItem.id);
-    ordered.push(createAutoFilledTaskFromCatalogItem(catalogItem, analysis));
-    syntheticCount += 1;
-  }
-
   const droppedCount = Math.max(0, tasks.length - ordered.length);
+  const missingCount = Math.max(0, REQUIRED_TASK_SUGGESTION_COUNT - ordered.length);
 
   return {
     tasks: ordered.slice(0, REQUIRED_TASK_SUGGESTION_COUNT),
-    syntheticCount,
     droppedCount,
+    missingCount,
+  };
+}
+
+function summarizeTaskNameQuality(tasks: Task[]) {
+  const jargonPattern =
+    /(react|zustand|client-side rendering|state management|graph visualization|api|dom|json|route|hook|script|simulation|application|接口|脚本|代码|路由)/iu;
+
+  let nameReadableCount = 0;
+  let nameJargonRejectedCount = 0;
+  let nameRewrittenCount = 0;
+
+  for (const task of tasks) {
+    const name = task.name.trim();
+    const hasJargon = jargonPattern.test(name);
+    const readable =
+      /[\u4e00-\u9fff]/u.test(name) &&
+      !hasJargon &&
+      !/用户完成/u.test(name) &&
+      !/执行.+流程/u.test(name);
+    if (hasJargon) {
+      nameJargonRejectedCount += 1;
+    }
+    if (readable) {
+      nameReadableCount += 1;
+    } else {
+      nameRewrittenCount += 1;
+    }
+  }
+
+  return {
+    nameReadableCount,
+    nameRewrittenCount,
+    nameJargonRejectedCount,
   };
 }
 
@@ -1093,16 +1124,24 @@ async function runDiagnosisPipelineLlm4Stage(
     });
     const acceptedBaseTasks =
       validation.acceptedTasks.length > 0 ? validation.acceptedTasks : gateCandidateTasks;
-    const ensured = ensureFifteenTasks(
-      acceptedBaseTasks,
-      analysis,
-      buildTaskCatalogFromStructure(structureStage.output, true),
-    );
+    const ensured = ensureFifteenTasks(acceptedBaseTasks);
+    const nameQuality = summarizeTaskNameQuality(ensured.tasks);
     const quality = {
       autoFilledCount: taskStage.quality?.autoFilledCount ?? 0,
-      syntheticCount: (taskStage.quality?.syntheticCount ?? 0) + ensured.syntheticCount,
+      syntheticCount: taskStage.quality?.syntheticCount ?? 0,
       rewrittenNameCount: taskStage.quality?.rewrittenNameCount ?? 0,
+      nameRewrittenCount:
+        taskStage.quality?.nameRewrittenCount ??
+        taskStage.quality?.rewrittenNameCount ??
+        nameQuality.nameRewrittenCount,
+      nameReadableCount: taskStage.quality?.nameReadableCount ?? nameQuality.nameReadableCount,
+      namePolishPasses: taskStage.quality?.namePolishPasses ?? 1,
+      nameJargonRejectedCount:
+        taskStage.quality?.nameJargonRejectedCount ?? nameQuality.nameJargonRejectedCount,
       weakGateWarnings: validation.weakGateWarnings,
+      llmCompletionPasses: taskStage.quality?.llmCompletionPasses ?? 0,
+      llmGeneratedCount: taskStage.quality?.llmGeneratedCount ?? ensured.tasks.length,
+      nonLlmGeneratedCount: taskStage.quality?.nonLlmGeneratedCount ?? 0,
     };
 
     const gateRaw = JSON.stringify({
@@ -1120,7 +1159,15 @@ async function runDiagnosisPipelineLlm4Stage(
       autoFilledCount: quality.autoFilledCount,
       syntheticCount: quality.syntheticCount,
       rewrittenNameCount: quality.rewrittenNameCount,
+      nameRewrittenCount: quality.nameRewrittenCount,
+      nameReadableCount: quality.nameReadableCount,
+      namePolishPasses: quality.namePolishPasses,
+      nameJargonRejectedCount: quality.nameJargonRejectedCount,
+      llmCompletionPasses: quality.llmCompletionPasses,
+      llmGeneratedCount: quality.llmGeneratedCount,
+      nonLlmGeneratedCount: quality.nonLlmGeneratedCount,
       droppedCount: ensured.droppedCount,
+      missingCount: ensured.missingCount,
       blocked: validation.blocked,
       code: validation.code,
       reasons: validation.rejected.slice(0, 6),
@@ -1159,15 +1206,48 @@ async function runDiagnosisPipelineLlm4Stage(
       };
     }
 
+    if (ensured.missingCount > 0) {
+      const blockedRuntimeDetail = `LLM 任务数量不足：候选 ${validation.candidateCount}，通过 ${validation.acceptedCount}，有效任务 ${ensured.tasks.length}/15，缺失 ${ensured.missingCount}。`;
+      const blockedSummary = await summarizeStageDetail(
+        options.llmAdapter,
+        'tasks',
+        '任务生成',
+        blockedRuntimeDetail,
+        gateRaw,
+      );
+      markStageError(
+        progress,
+        'tasks',
+        '任务生成失败（LLM 输出数量不足）',
+        blockedSummary.detail,
+        blockedSummary.source,
+        gateRaw,
+      );
+      markProgressCompleted(progress, '分析完成（仅返回诊断，任务数量不足）');
+      return {
+        items: appendFallbackWarning(diagnosisItems, blockedRuntimeDetail),
+        tasks: [],
+        taskGeneration: createTaskGenerationFailure(
+          'INSUFFICIENT_LLM_TASKS',
+          `LLM 输出任务数量不足：${ensured.tasks.length}/15。`,
+          validation.candidateCount,
+          ensured.tasks.length,
+          Math.max(0, validation.candidateCount - ensured.tasks.length),
+        ),
+        source: 'diagnosis-only',
+      };
+    }
+
     const isDegraded =
       Boolean(taskStage.degraded) ||
-      quality.autoFilledCount > 0 ||
       quality.syntheticCount > 0 ||
       quality.rewrittenNameCount > 0 ||
+      quality.nameJargonRejectedCount > 0 ||
+      quality.llmCompletionPasses > 0 ||
       quality.weakGateWarnings > 0 ||
       validation.rejectedCount > 0;
     const taskRuntimeDetail = isDegraded
-      ? `任务生成完成（自动补全模式）：候选 ${validation.candidateCount}，通过 ${validation.acceptedCount}，最终输出 ${ensured.tasks.length}/15，自动补全 ${quality.autoFilledCount}，补齐 ${quality.syntheticCount}。`
+      ? `任务生成完成（LLM 补全模式）：候选 ${validation.candidateCount}，通过 ${validation.acceptedCount}，最终输出 ${ensured.tasks.length}/15，LLM 补全轮次 ${quality.llmCompletionPasses}，二轮补齐 ${quality.syntheticCount}。`
       : `任务生成完成：候选 ${validation.candidateCount}，通过 ${validation.acceptedCount}，固定输出 ${ensured.tasks.length}/15。`;
     const taskSummary = await summarizeStageDetail(
       options.llmAdapter,
@@ -1193,7 +1273,7 @@ async function runDiagnosisPipelineLlm4Stage(
       taskGeneration: isDegraded
         ? createTaskGenerationDegraded(
             'TASK_GENERATION_DEGRADED',
-            `任务已生成并自动补全到 ${REQUIRED_TASK_SUGGESTION_COUNT} 条，可继续下一步。`,
+            `任务已生成并由 LLM 补全到 ${REQUIRED_TASK_SUGGESTION_COUNT} 条，可继续下一步。`,
             validation.candidateCount,
             ensured.tasks.length,
             quality,
@@ -1445,16 +1525,20 @@ async function runDiagnosisPipeline(
     });
     const acceptedBaseTasks =
       validation.acceptedTasks.length > 0 ? validation.acceptedTasks : gateCandidateTasks;
-    const ensured = ensureFifteenTasks(
-      acceptedBaseTasks,
-      analysis,
-      buildDynamicTaskCatalog(analysis),
-    );
+    const ensured = ensureFifteenTasks(acceptedBaseTasks);
+    const nameQuality = summarizeTaskNameQuality(ensured.tasks);
     const quality = {
       autoFilledCount: 0,
-      syntheticCount: ensured.syntheticCount,
+      syntheticCount: 0,
       rewrittenNameCount: 0,
+      nameRewrittenCount: nameQuality.nameRewrittenCount,
+      nameReadableCount: nameQuality.nameReadableCount,
+      namePolishPasses: 1,
+      nameJargonRejectedCount: nameQuality.nameJargonRejectedCount,
       weakGateWarnings: validation.weakGateWarnings,
+      llmCompletionPasses: 0,
+      llmGeneratedCount: ensured.tasks.length,
+      nonLlmGeneratedCount: 0,
     };
 
     const gateRaw = JSON.stringify({
@@ -1465,8 +1549,16 @@ async function runDiagnosisPipeline(
       warningCount: validation.weakGateWarnings,
       repairedEvidenceRefCount: validation.repairedEvidenceRefCount,
       unresolvedEvidenceRefs: validation.unresolvedEvidenceRefs,
-      syntheticCount: ensured.syntheticCount,
+      syntheticCount: quality.syntheticCount,
+      nameRewrittenCount: quality.nameRewrittenCount,
+      nameReadableCount: quality.nameReadableCount,
+      namePolishPasses: quality.namePolishPasses,
+      nameJargonRejectedCount: quality.nameJargonRejectedCount,
+      llmCompletionPasses: quality.llmCompletionPasses,
+      llmGeneratedCount: quality.llmGeneratedCount,
+      nonLlmGeneratedCount: quality.nonLlmGeneratedCount,
       droppedCount: ensured.droppedCount,
+      missingCount: ensured.missingCount,
       blocked: validation.blocked,
       code: validation.code,
       reasons: validation.rejected.slice(0, 6),
@@ -1504,12 +1596,46 @@ async function runDiagnosisPipeline(
       };
     }
 
+    if (ensured.missingCount > 0) {
+      const blockedRuntimeDetail = `LLM 任务数量不足：候选 ${validation.candidateCount}，通过 ${validation.acceptedCount}，有效任务 ${ensured.tasks.length}/15，缺失 ${ensured.missingCount}。`;
+      const blockedSummary = await summarizeStageDetail(
+        options.llmAdapter,
+        'tasks',
+        '任务生成',
+        blockedRuntimeDetail,
+        gateRaw,
+      );
+      markStageError(
+        progress,
+        'tasks',
+        '任务生成失败（LLM 输出数量不足）',
+        blockedSummary.detail,
+        blockedSummary.source,
+        gateRaw,
+      );
+      markProgressCompleted(progress, '分析完成（仅返回诊断，任务数量不足）');
+      return {
+        items: appendFallbackWarning(diagnosisItems, blockedRuntimeDetail),
+        tasks: [],
+        taskGeneration: createTaskGenerationFailure(
+          'INSUFFICIENT_LLM_TASKS',
+          `LLM 输出任务数量不足：${ensured.tasks.length}/15。`,
+          validation.candidateCount,
+          ensured.tasks.length,
+          Math.max(0, validation.candidateCount - ensured.tasks.length),
+        ),
+        source: 'diagnosis-only',
+      };
+    }
+
     const isDegraded =
-      quality.syntheticCount > 0 ||
+      quality.nameRewrittenCount > 0 ||
+      quality.nameJargonRejectedCount > 0 ||
+      quality.llmCompletionPasses > 0 ||
       quality.weakGateWarnings > 0 ||
       validation.rejectedCount > 0;
     const taskRuntimeDetail = isDegraded
-      ? `任务生成完成（自动补全模式）：候选 ${validation.candidateCount}，通过 ${validation.acceptedCount}，最终输出 ${ensured.tasks.length}/15，补齐 ${quality.syntheticCount}。`
+      ? `任务生成完成（LLM 补全模式）：候选 ${validation.candidateCount}，通过 ${validation.acceptedCount}，最终输出 ${ensured.tasks.length}/15，LLM 补全轮次 ${quality.llmCompletionPasses}。`
       : `任务生成完成：候选 ${validation.candidateCount}，通过 ${validation.acceptedCount}，固定输出 ${ensured.tasks.length}/15。`;
     const taskSummary = await summarizeStageDetail(
       options.llmAdapter,
@@ -1535,7 +1661,7 @@ async function runDiagnosisPipeline(
       taskGeneration: isDegraded
         ? createTaskGenerationDegraded(
             'TASK_GENERATION_DEGRADED',
-            `任务已生成并自动补全到 ${REQUIRED_TASK_SUGGESTION_COUNT} 条，可继续下一步。`,
+            `任务已生成并由 LLM 补全到 ${REQUIRED_TASK_SUGGESTION_COUNT} 条，可继续下一步。`,
             validation.candidateCount,
             ensured.tasks.length,
             quality,

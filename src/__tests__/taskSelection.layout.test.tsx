@@ -34,5 +34,10 @@ describe('TaskSelection layout', () => {
 
     expect(leftPanel.querySelector('.overflow-y-auto')).not.toBeNull();
     expect(rightPanel.querySelector('.overflow-y-auto')).not.toBeNull();
+
+    fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
+    const detailPanel = screen.getByTestId('task-selection-task-detail');
+    expect(detailPanel.className).toContain('max-h-56');
+    expect(detailPanel.className).toContain('overflow-y-auto');
   });
 });

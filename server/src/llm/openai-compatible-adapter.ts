@@ -83,9 +83,11 @@ const ANALYSIS_SYSTEM_PROMPT = loadPromptFromEnv(
   '11) evidenceRefs 必须逐项从 pageSummary.allowedEvidenceRefIds 中选择，不可伪造、不可改写。',
   '12) evidenceReason 必须解释该任务为什么由这些证据支持。',
   '13) taskProposals 必须输出 15 条，优先覆盖 prioritizedTaskIds 前列。',
-  '14) task name 必须中文，表达用户操作任务，禁止使用 API/DOM/JSON/脚本 等代码术语命名。',
-  '15) 若个别字段信息不足，可基于页面上下文做合理补全，但不要留空字段。',
-  '16) 返回 JSON：{"diagnosisItems":[...],"prioritizedTaskIds":[...],"taskProposals":[{"id":1,"name":"用户完成...","description":"...","difficulty":"中等","estimatedDuration":"8-12分钟","testScenario":"...","operationSteps":["..."],"successCriteria":["..."],"tags":["..."],"evidenceRefs":["interaction:button-1"],"evidenceReason":"..."}]}。',
+  '14) 先识别页面功能集合，再映射任务；步骤必须体现“访问入口->执行操作->确认成功”。',
+  '15) task name 必须是中文“目标结果名”，优先使用页面可见词，示例：“完成首次页面加载”“保存并导出草图”“查看分析结果”。',
+  '16) 严禁技术实现命名：不要出现 React/Zustand/Client-side Rendering/DOM/API/JSON/Hook/Route/State Management 等词，除非它们是页面可见产品词。',
+  '17) 若个别字段信息不足，可基于页面上下文做合理补全，但不要留空字段。',
+  '18) 返回 JSON：{"diagnosisItems":[...],"prioritizedTaskIds":[...],"taskProposals":[{"id":1,"name":"完成首次页面加载","description":"...","difficulty":"中等","estimatedDuration":"8-12分钟","testScenario":"...","operationSteps":["进入功能入口","完成关键操作","确认结果反馈"],"successCriteria":["...","..."],"tags":["..."],"evidenceRefs":["interaction:button-1"],"evidenceReason":"..."}]}。',
 ].join('\n'),
 );
 
@@ -103,9 +105,11 @@ const TASK_PROPOSAL_SYSTEM_PROMPT = loadPromptFromEnv(
   '6) 每个 taskProposals 必须包含：id,name,description,difficulty,estimatedDuration,testScenario,operationSteps,successCriteria,tags,evidenceRefs,evidenceReason。',
   '7) operationSteps 至少 3 步，successCriteria 至少 2 条。',
   '8) evidenceRefs 必须逐项从 pageSummary.allowedEvidenceRefIds 中选择。',
-  '9) task name 必须是中文用户操作任务表达（如“用户完成...”），禁止代码术语命名。',
-  '10) 若个别字段缺失，请按用户操作语境补全，不要留空。',
-  '11) 返回 JSON：{"taskProposals":[{"id":1,"name":"用户完成...","description":"...","difficulty":"中等","estimatedDuration":"8-12分钟","testScenario":"...","operationSteps":["..."],"successCriteria":["..."],"tags":["..."],"evidenceRefs":["interaction:button-1"],"evidenceReason":"..."}]}。',
+  '9) task name 必须是中文“目标结果名”（如“完成首次页面加载”“保存并导出草图”），禁止“用户完成”前缀与技术实现命名。',
+  '10) 仅保留页面可见产品词；不要出现 React/Zustand/Client-side Rendering/DOM/API/JSON/Hook/Route 等实现术语。',
+  '11) 操作步骤必须体现“访问入口->执行操作->确认成功”。',
+  '12) 若个别字段缺失，请按用户操作语境补全，不要留空。',
+  '13) 返回 JSON：{"taskProposals":[{"id":1,"name":"保存并导出草图","description":"...","difficulty":"中等","estimatedDuration":"8-12分钟","testScenario":"...","operationSteps":["进入导出入口","执行导出操作","确认文件可用"],"successCriteria":["...","..."],"tags":["..."],"evidenceRefs":["interaction:button-1"],"evidenceReason":"..."}]}。',
 ].join('\n'),
 );
 
@@ -120,23 +124,42 @@ const STAGE_SUMMARY_PROMPT = loadPromptFromEnv(
 );
 
 const REQUIRED_TASK_PROPOSAL_COUNT = 15;
-const CODE_JARGON_HINTS = ['api', 'sdk', 'dom', 'json', 'schema', 'script', 'route', '接口', '脚本', '代码', '路由'];
-const USER_ACTION_HINTS = [
-  '点击',
-  '输入',
-  '选择',
-  '打开',
-  '查看',
-  '提交',
-  '切换',
-  '确认',
-  '保存',
-  '创建',
-  '完成',
-  '进入',
-  '使用',
-  '上传',
-  '下载',
+const CODE_JARGON_HINTS = [
+  'api',
+  'sdk',
+  'dom',
+  'json',
+  'schema',
+  'script',
+  'route',
+  'hook',
+  'react',
+  'zustand',
+  'client-side rendering',
+  'state management',
+  'graph visualization',
+  'simulation',
+  'application',
+  '接口',
+  '脚本',
+  '代码',
+  '路由',
+  '渲染',
+  '状态管理',
+  '图可视化',
+];
+const RESULT_PREFIX_HINTS = ['完成', '确认', '查看', '保存', '导出', '恢复', '提交', '切换', '创建', '进入', '开始', '继续', '找到'];
+const TASK_NAME_REWRITE_RULES: Array<{ pattern: RegExp; replacement: string }> = [
+  { pattern: /client[-\s]?side rendering/giu, replacement: '页面加载' },
+  { pattern: /state management/giu, replacement: '状态设置' },
+  { pattern: /graph visualization/giu, replacement: '图形视图' },
+  { pattern: /image generation simulation/giu, replacement: '图片生成' },
+  { pattern: /application/giu, replacement: '页面' },
+  { pattern: /simulation/giu, replacement: '操作' },
+  { pattern: /react/giu, replacement: '' },
+  { pattern: /zustand/giu, replacement: '' },
+  { pattern: /api|dom|json|schema|script|route|hook|sdk/giu, replacement: '' },
+  { pattern: /接口|脚本|代码|路由|组件|函数/gu, replacement: '' },
 ];
 
 function clamp(value: number, min: number, max: number): number {
@@ -278,91 +301,192 @@ function containsChineseText(value: string): boolean {
   return /[\u4e00-\u9fff]/.test(value);
 }
 
-function hasUserActionHint(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return USER_ACTION_HINTS.some((hint) => normalized.includes(hint.toLowerCase()));
-}
-
-function hasCodeJargon(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return CODE_JARGON_HINTS.some((hint) => normalized.includes(hint.toLowerCase()));
-}
-
-function sanitizeTaskName(inputName: string, fallbackName: string): { name: string; rewritten: boolean } {
-  const source = inputName.trim();
-  const fallback = fallbackName.trim() || '页面核心操作';
-  const preferred = source || fallback;
-  const isInvalid =
-    !containsChineseText(preferred) ||
-    hasCodeJargon(preferred) ||
-    !hasUserActionHint(preferred);
-
-  if (!isInvalid) {
-    return { name: preferred, rewritten: false };
-  }
-
-  const core = fallback
-    .replace(/^用户任务\d+[:：]?\s*/u, '')
-    .replace(/^用户/u, '')
-    .trim();
-
-  return {
-    name: `用户完成${core || '页面操作'}任务`,
-    rewritten: true,
-  };
-}
-
-function pickFallbackEvidenceRefs(
-  allowedEvidenceRefIds: string[],
-  indexSeed: number,
-): string[] {
-  if (allowedEvidenceRefIds.length === 0) {
+function toVisibleTokens(text: string): string[] {
+  const source = text.trim();
+  if (!source) {
     return [];
   }
 
-  if (allowedEvidenceRefIds.length === 1) {
-    return [allowedEvidenceRefIds[0]];
-  }
-
-  const first = allowedEvidenceRefIds[indexSeed % allowedEvidenceRefIds.length];
-  const second = allowedEvidenceRefIds[(indexSeed + 1) % allowedEvidenceRefIds.length];
-  return first === second ? [first] : [first, second];
+  const chinese = source.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+  const english = source.match(/[a-z][a-z0-9-]{1,}/gi) ?? [];
+  return [...chinese, ...english, source];
 }
 
-function mergeListWithFallback(
-  values: string[],
-  fallback: string[],
-  minCount: number,
-): { list: string[]; autoFilledCount: number } {
-  const output: string[] = [];
-  const seen = new Set<string>();
-  let autoFilledCount = 0;
+function buildVisibleTermSet(input: {
+  title?: string;
+  headingsText?: string[];
+  primaryButtons?: string[];
+  primaryLinks?: string[];
+  primaryInputs?: string[];
+}): Set<string> {
+  const visible = new Set<string>();
+  const feed = [
+    input.title ?? '',
+    ...(input.headingsText ?? []),
+    ...(input.primaryButtons ?? []),
+    ...(input.primaryLinks ?? []),
+    ...(input.primaryInputs ?? []),
+  ];
 
-  for (const value of values) {
-    const normalized = value.trim();
-    if (!normalized || seen.has(normalized)) {
-      continue;
+  for (const text of feed) {
+    for (const token of toVisibleTokens(String(text))) {
+      const normalized = token.trim().toLowerCase();
+      if (normalized) {
+        visible.add(normalized);
+      }
     }
-    seen.add(normalized);
-    output.push(normalized);
   }
 
-  for (const value of fallback) {
-    if (output.length >= minCount) {
-      break;
-    }
-    const normalized = value.trim();
-    if (!normalized || seen.has(normalized)) {
-      continue;
-    }
-    seen.add(normalized);
-    output.push(normalized);
-    autoFilledCount += 1;
+  return visible;
+}
+
+function isVisibleTermAllowed(token: string, visibleTermSet: Set<string>): boolean {
+  const normalized = token.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (visibleTermSet.has(normalized)) {
+    return true;
+  }
+
+  const parts = normalized.split(/[\s:/_-]+/g).filter(Boolean);
+  if (parts.length === 0) {
+    return false;
+  }
+  return parts.every((part) => visibleTermSet.has(part));
+}
+
+function replaceNameJargon(
+  value: string,
+  visibleTermSet: Set<string>,
+): { normalized: string; jargonRejectedCount: number } {
+  let normalized = value;
+  let jargonRejectedCount = 0;
+
+  for (const rule of TASK_NAME_REWRITE_RULES) {
+    normalized = normalized.replace(rule.pattern, (matched) => {
+      if (isVisibleTermAllowed(matched, visibleTermSet)) {
+        return matched;
+      }
+      jargonRejectedCount += 1;
+      return rule.replacement;
+    });
   }
 
   return {
-    list: output.slice(0, Math.max(minCount, output.length)),
-    autoFilledCount,
+    normalized,
+    jargonRejectedCount,
+  };
+}
+
+function normalizeNameText(value: string): string {
+  return value
+    .replace(/^用户任务\d+[:：]?\s*/u, '')
+    .replace(/^用户(?:进行|执行|完成)?/u, '')
+    .replace(/^(执行|进行|实现)/u, '')
+    .replace(/(流程|步骤|操作路径|任务流程)$/u, '')
+    .replace(/[【】[\]{}()（）<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasCodeJargon(value: string, visibleTermSet: Set<string>): boolean {
+  const normalized = value.trim().toLowerCase();
+  return CODE_JARGON_HINTS.some(
+    (hint) => normalized.includes(hint.toLowerCase()) && !isVisibleTermAllowed(hint, visibleTermSet),
+  );
+}
+
+function ensureResultNameStyle(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return '完成关键操作并确认结果';
+  }
+  if (RESULT_PREFIX_HINTS.some((prefix) => normalized.startsWith(prefix))) {
+    return normalized;
+  }
+  return `完成${normalized}`;
+}
+
+function extractReadableCoreFromHints(
+  fallbackName: string,
+  hints: {
+    description?: string;
+    testScenario?: string;
+    operationSteps?: string[];
+    successCriteria?: string[];
+  },
+): string {
+  const candidates = [
+    ...(hints.successCriteria ?? []),
+    ...(hints.operationSteps ?? []).slice(-2),
+    hints.testScenario ?? '',
+    hints.description ?? '',
+    fallbackName,
+  ]
+    .map((item) => normalizeNameText(String(item ?? '')))
+    .filter((item) => item.length > 0);
+
+  for (const candidate of candidates) {
+    const picked = candidate
+      .replace(/^(?:请|需|需要|用户|在|将)/u, '')
+      .replace(/(?:成功|能够|可以|是否|并验证|并确认|验证|检查)$/u, '')
+      .trim();
+    if (picked.length >= 4 && containsChineseText(picked)) {
+      return picked;
+    }
+  }
+
+  return '关键操作并确认结果';
+}
+
+function isReadableTaskName(value: string, visibleTermSet: Set<string>): boolean {
+  if (!containsChineseText(value)) {
+    return false;
+  }
+  if (hasCodeJargon(value, visibleTermSet)) {
+    return false;
+  }
+  if (/(执行.+流程|application|simulation|state management)/iu.test(value)) {
+    return false;
+  }
+  return value.trim().length >= 4;
+}
+
+function sanitizeTaskName(
+  inputName: string,
+  fallbackName: string,
+  options: {
+    visibleTermSet: Set<string>;
+    description?: string;
+    testScenario?: string;
+    operationSteps?: string[];
+    successCriteria?: string[];
+  },
+): { name: string; rewritten: boolean; jargonRejectedCount: number; readable: boolean } {
+  const source = normalizeNameText(inputName);
+  const fallback = normalizeNameText(fallbackName) || '关键操作并确认结果';
+  const preferred = source || fallback;
+  const firstPass = replaceNameJargon(preferred, options.visibleTermSet);
+  let candidate = ensureResultNameStyle(normalizeNameText(firstPass.normalized));
+
+  if (!isReadableTaskName(candidate, options.visibleTermSet)) {
+    const readableCore = extractReadableCoreFromHints(fallback, options);
+    const secondPass = replaceNameJargon(readableCore, options.visibleTermSet);
+    candidate = ensureResultNameStyle(normalizeNameText(secondPass.normalized));
+    return {
+      name: candidate || '完成关键操作并确认结果',
+      rewritten: candidate !== inputName.trim(),
+      jargonRejectedCount: firstPass.jargonRejectedCount + secondPass.jargonRejectedCount,
+      readable: isReadableTaskName(candidate, options.visibleTermSet),
+    };
+  }
+
+  return {
+    name: candidate,
+    rewritten: candidate !== inputName.trim(),
+    jargonRejectedCount: firstPass.jargonRejectedCount,
+    readable: isReadableTaskName(candidate, options.visibleTermSet),
   };
 }
 
@@ -544,10 +668,21 @@ interface LenientRecoveryQuality {
   autoFilledCount: number;
   syntheticCount: number;
   rewrittenNameCount: number;
+  llmCompletionPasses: number;
+  llmGeneratedCount: number;
+  nonLlmGeneratedCount: number;
+  nameRewrittenCount: number;
+  nameReadableCount: number;
+  namePolishPasses: number;
+  nameJargonRejectedCount: number;
 }
 
 interface LenientTaskRecoveryResult {
-  output: LLMTaskStageOutput;
+  summary: string;
+  prioritizedTaskIds: number[];
+  taskProposals: LLMTaskProposal[];
+  missingTaskCount: number;
+  missingFieldMap: Array<{ id: number; missingFields: string[] }>;
   quality: LenientRecoveryQuality;
 }
 
@@ -555,13 +690,12 @@ function recoverLenientTaskStageOutput(
   rawText: string,
   fallbackCatalog: LLMAnalysisInput['taskCatalog'],
   allowedEvidenceRefIds: string[],
+  visibleTermSet: Set<string>,
 ): LenientTaskRecoveryResult {
   const parsed = safeParseJson(rawText ?? '');
   const catalog = fallbackCatalog.slice(0, REQUIRED_TASK_PROPOSAL_COUNT);
   const catalogIds = catalog.map((item) => item.id);
   const allowedEvidenceSet = new Set(allowedEvidenceRefIds);
-  const fallbackEvidence =
-    allowedEvidenceRefIds.length > 0 ? [...allowedEvidenceRefIds] : ['text:bundle-1'];
   const proposalsRaw = pickFirstPath(parsed, [
     ['taskProposals'],
     ['task_proposals'],
@@ -596,121 +730,134 @@ function recoverLenientTaskStageOutput(
     autoFilledCount: 0,
     syntheticCount: 0,
     rewrittenNameCount: 0,
+    llmCompletionPasses: 0,
+    llmGeneratedCount: 0,
+    nonLlmGeneratedCount: 0,
+    nameRewrittenCount: 0,
+    nameReadableCount: 0,
+    namePolishPasses: 1,
+    nameJargonRejectedCount: 0,
   };
 
+  const recovered: LLMTaskProposal[] = [];
+  const missingFieldMap: Array<{ id: number; missingFields: string[] }> = [];
+
   let orderCursor = 0;
-  const taskProposals: LLMTaskProposal[] = catalog.map((task, index) => {
+  const seen = new Set<number>();
+  for (const task of catalog) {
     const rawItem = rawById.get(task.id) ?? rawByOrder[orderCursor];
     if (!rawById.has(task.id) && rawItem) {
       orderCursor += 1;
     }
-    const isSynthetic = !rawItem;
-    if (isSynthetic) {
-      quality.syntheticCount += 1;
+    if (!rawItem || seen.has(task.id)) {
+      continue;
     }
+    seen.add(task.id);
 
     const rawName = String(
       pickObjectField(rawItem ?? {}, ['name', 'title']) ?? '',
     );
-    const { name, rewritten } = sanitizeTaskName(rawName, task.name);
+    const { name, rewritten, readable, jargonRejectedCount } = sanitizeTaskName(rawName, task.name, {
+      visibleTermSet,
+      description: String(
+        pickObjectField(rawItem ?? {}, ['description', 'desc']) ?? task.description,
+      ),
+      testScenario: String(
+        pickObjectField(rawItem ?? {}, ['testScenario', 'test_scenario', 'scenario', 'context']) ?? '',
+      ),
+      operationSteps: normalizeStringList(
+        pickObjectField(rawItem ?? {}, ['operationSteps', 'operation_steps', 'steps', 'stepList']),
+        12,
+      ),
+      successCriteria: normalizeStringList(
+        pickObjectField(rawItem ?? {}, ['successCriteria', 'success_criteria', 'criteria', 'acceptanceCriteria']),
+        10,
+      ),
+    });
     if (rewritten) {
       quality.rewrittenNameCount += 1;
+      quality.nameRewrittenCount += 1;
     }
+    if (readable) {
+      quality.nameReadableCount += 1;
+    }
+    quality.nameJargonRejectedCount += jargonRejectedCount;
 
     const descriptionRaw = String(
       pickObjectField(rawItem ?? {}, ['description', 'desc']) ?? '',
     ).trim();
-    const description =
-      descriptionRaw.length > 0
-        ? descriptionRaw
-        : `用户围绕「${name}」完成关键操作，观察流程是否顺畅并确认反馈。`;
-    if (!descriptionRaw) {
-      quality.autoFilledCount += 1;
-    }
+    const description = descriptionRaw || task.description;
 
     const estimatedDurationRaw = String(
       pickObjectField(rawItem ?? {}, ['estimatedDuration', 'estimated_duration', 'duration']) ?? '',
     ).trim();
-    const estimatedDuration = estimatedDurationRaw || '8-12分钟';
-    if (!estimatedDurationRaw) {
-      quality.autoFilledCount += 1;
-    }
+    const estimatedDuration = estimatedDurationRaw || undefined;
 
     const testScenarioRaw = String(
       pickObjectField(rawItem ?? {}, ['testScenario', 'test_scenario', 'scenario', 'context']) ?? '',
     ).trim();
-    const testScenario =
-      testScenarioRaw ||
-      `你正在使用当前网站，需要完成「${name}」并确认是否达到预期结果。`;
-    if (!testScenarioRaw) {
-      quality.autoFilledCount += 1;
-    }
-
-    const defaultOperationSteps = [
-      `打开与「${name}」相关的页面或入口`,
-      `按页面提示完成「${name}」核心操作`,
-      '查看系统反馈并确认任务结果',
-    ];
     const rawOperationSteps = normalizeStringList(
       pickObjectField(rawItem ?? {}, ['operationSteps', 'operation_steps', 'steps', 'stepList']),
       12,
     );
-    const mergedOperationSteps = mergeListWithFallback(rawOperationSteps, defaultOperationSteps, 3);
-    quality.autoFilledCount += mergedOperationSteps.autoFilledCount;
-
-    const defaultSuccessCriteria = [
-      `用户可以独立完成「${name}」`,
-      '系统反馈清晰且用户可理解',
-    ];
     const rawSuccessCriteria = normalizeStringList(
       pickObjectField(rawItem ?? {}, ['successCriteria', 'success_criteria', 'criteria', 'acceptanceCriteria']),
       10,
     );
-    const mergedSuccessCriteria = mergeListWithFallback(rawSuccessCriteria, defaultSuccessCriteria, 2);
-    quality.autoFilledCount += mergedSuccessCriteria.autoFilledCount;
 
     const tagsRaw = normalizeStringList(
       pickObjectField(rawItem ?? {}, ['tags', 'labels']),
       8,
     );
-    const tags = tagsRaw.length > 0 ? tagsRaw : ['用户任务', '自动补全'];
-    if (tagsRaw.length === 0) {
-      quality.autoFilledCount += 1;
-    }
+    const tags = tagsRaw.length > 0 ? tagsRaw : undefined;
 
     const refsRaw = normalizeStringList(
       pickObjectField(rawItem ?? {}, ['evidenceRefs', 'evidence_refs', 'refs', 'evidence']),
       6,
     ).filter((refId) => allowedEvidenceSet.has(refId));
-    const refs = refsRaw.length > 0 ? refsRaw : pickFallbackEvidenceRefs(fallbackEvidence, index + task.id);
-    if (refsRaw.length === 0) {
-      quality.autoFilledCount += 1;
-    }
+    const refs = refsRaw.length > 0 ? refsRaw : undefined;
 
     const evidenceReasonRaw = String(
       pickObjectField(rawItem ?? {}, ['evidenceReason', 'evidence_reason', 'reason']) ?? '',
     ).trim();
-    const evidenceReason =
-      evidenceReasonRaw ||
-      `基于当前页面已提取证据（${refs.slice(0, 2).join('、')}）自动补全该任务。`;
-    if (!evidenceReasonRaw) {
-      quality.autoFilledCount += 1;
-    }
+    const evidenceReason = evidenceReasonRaw || undefined;
 
-    return {
+    const proposal: LLMTaskProposal = {
       id: task.id,
       name,
       description,
       difficulty: normalizeDifficulty(pickObjectField(rawItem ?? {}, ['difficulty', 'level'])),
       estimatedDuration,
-      testScenario,
-      operationSteps: mergedOperationSteps.list,
-      successCriteria: mergedSuccessCriteria.list,
+      testScenario: testScenarioRaw || undefined,
+      operationSteps: rawOperationSteps.length > 0 ? rawOperationSteps : undefined,
+      successCriteria: rawSuccessCriteria.length > 0 ? rawSuccessCriteria : undefined,
       tags,
       evidenceRefs: refs,
       evidenceReason,
     };
-  });
+
+    const missingFields: string[] = [];
+    if (!proposal.testScenario) {
+      missingFields.push('testScenario');
+    }
+    if ((proposal.operationSteps?.length ?? 0) < 3) {
+      missingFields.push('operationSteps');
+    }
+    if ((proposal.successCriteria?.length ?? 0) < 2) {
+      missingFields.push('successCriteria');
+    }
+    if ((proposal.evidenceRefs?.length ?? 0) < 1) {
+      missingFields.push('evidenceRefs');
+    }
+    if (!proposal.evidenceReason) {
+      missingFields.push('evidenceReason');
+    }
+    if (missingFields.length > 0) {
+      missingFieldMap.push({ id: task.id, missingFields });
+    }
+
+    recovered.push(proposal);
+  }
 
   const prioritizedTaskIdsRaw = pickFirstPath(parsed, [
     ['prioritizedTaskIds'],
@@ -725,18 +872,20 @@ function recoverLenientTaskStageOutput(
   const completedPriority = [
     ...prioritizedTaskIds,
     ...catalogIds.filter((taskId) => !prioritizedTaskIds.includes(taskId)),
-  ].slice(0, taskProposals.length);
+  ].slice(0, Math.max(recovered.length, 1));
 
   const summaryRaw = String(
     pickFirstPath(parsed, [['summary'], ['result', 'summary'], ['data', 'summary']]) ?? '',
   ).trim();
 
+  quality.llmGeneratedCount = recovered.length;
+
   return {
-    output: {
-      summary: summaryRaw || '任务阶段已启用自动补全恢复，返回固定15条用户操作任务。',
-      prioritizedTaskIds: completedPriority.length > 0 ? completedPriority : taskProposals.map((task) => task.id),
-      taskProposals,
-    },
+    summary: summaryRaw || '首轮任务解析完成，等待补全。',
+    prioritizedTaskIds: completedPriority.length > 0 ? completedPriority : recovered.map((task) => task.id),
+    taskProposals: recovered,
+    missingTaskCount: Math.max(0, REQUIRED_TASK_PROPOSAL_COUNT - recovered.length),
+    missingFieldMap,
     quality,
   };
 }
@@ -1126,6 +1275,7 @@ async function callAnalysisCompletion(
   options: OpenAICompatibleAdapterOptions,
   input: LLMAnalysisInput,
 ): Promise<LLMAnalysisOutput> {
+  const visibleTermSet = buildVisibleTermSet(input.pageSummary);
   const bodyWithJsonFormat = {
     model: options.model,
     temperature: Math.min(options.temperature, 0.35),
@@ -1197,6 +1347,12 @@ async function callAnalysisCompletion(
         // Keep first valid output when rewrite call fails.
       }
     }
+
+    output.taskProposals = polishReadableTaskProposals(
+      output.taskProposals,
+      input.taskCatalog,
+      visibleTermSet,
+    );
 
     return output;
   } finally {
@@ -1381,52 +1537,332 @@ async function callRiskStageCompletion(
   });
 }
 
+function collectTaskMissingFields(task: LLMTaskProposal): string[] {
+  const missing: string[] = [];
+  if (!task.testScenario || !String(task.testScenario).trim()) {
+    missing.push('testScenario');
+  }
+  if ((task.operationSteps?.length ?? 0) < 3) {
+    missing.push('operationSteps');
+  }
+  if ((task.successCriteria?.length ?? 0) < 2) {
+    missing.push('successCriteria');
+  }
+  if ((task.evidenceRefs?.length ?? 0) < 1) {
+    missing.push('evidenceRefs');
+  }
+  if (!task.evidenceReason || !String(task.evidenceReason).trim()) {
+    missing.push('evidenceReason');
+  }
+  return missing;
+}
+
+function collectMissingFieldMap(
+  proposals: LLMTaskProposal[],
+): Array<{ id: number; missingFields: string[] }> {
+  const rows: Array<{ id: number; missingFields: string[] }> = [];
+  for (const proposal of proposals) {
+    const missingFields = collectTaskMissingFields(proposal);
+    if (missingFields.length > 0) {
+      rows.push({ id: proposal.id, missingFields });
+    }
+  }
+  return rows;
+}
+
+function normalizeTaskNameKey(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function scoreTaskCompleteness(task: LLMTaskProposal): number {
+  let score = 0;
+  if (task.name?.trim()) {
+    score += 2;
+  }
+  if (task.description?.trim()) {
+    score += 2;
+  }
+  if (task.testScenario?.trim()) {
+    score += 2;
+  }
+  score += Math.min(4, task.operationSteps?.length ?? 0);
+  score += Math.min(3, task.successCriteria?.length ?? 0);
+  score += Math.min(2, task.evidenceRefs?.length ?? 0);
+  if (task.evidenceReason?.trim()) {
+    score += 2;
+  }
+  return score;
+}
+
+function mergeLlmTaskProposals(
+  primary: LLMTaskProposal[],
+  completion: LLMTaskProposal[],
+): LLMTaskProposal[] {
+  const order: string[] = [];
+  const store = new Map<string, { task: LLMTaskProposal; score: number }>();
+
+  const upsert = (task: LLMTaskProposal) => {
+    const key = normalizeTaskNameKey(task.name) || `id:${task.id}`;
+    const score = scoreTaskCompleteness(task);
+    const existing = store.get(key);
+    if (!existing) {
+      store.set(key, { task, score });
+      order.push(key);
+      return;
+    }
+    if (score > existing.score) {
+      store.set(key, { task, score });
+    }
+  };
+
+  for (const task of primary) {
+    upsert(task);
+  }
+  for (const task of completion) {
+    upsert(task);
+  }
+
+  return order.map((key) => store.get(key)?.task).filter((item): item is LLMTaskProposal => Boolean(item));
+}
+
+function polishReadableTaskProposals(
+  taskProposals: LLMTaskProposal[],
+  fallbackCatalog: LLMAnalysisInput['taskCatalog'],
+  visibleTermSet: Set<string>,
+): LLMTaskProposal[] {
+  const fallbackNameById = new Map(fallbackCatalog.map((item) => [item.id, item.name]));
+  return taskProposals.map((proposal) => {
+    const fallbackName = fallbackNameById.get(proposal.id) ?? proposal.name;
+    const normalized = sanitizeTaskName(proposal.name, fallbackName, {
+      visibleTermSet,
+      description: proposal.description,
+      testScenario: proposal.testScenario,
+      operationSteps: proposal.operationSteps,
+      successCriteria: proposal.successCriteria,
+    });
+    return {
+      ...proposal,
+      name: normalized.name,
+    };
+  });
+}
+
+async function callTaskCompletionPass(
+  options: OpenAICompatibleAdapterOptions,
+  input: LLMTaskStageInput,
+  existingTaskProposals: LLMTaskProposal[],
+  missingFieldMap: Array<{ id: number; missingFields: string[] }>,
+  missingTaskCount: number,
+): Promise<LLMStageResult<LLMTaskStageOutput>> {
+  return callStructuredStage<LLMTaskStageOutput>({
+    options,
+    stage: 'tasks',
+    schema: llmTaskStageSchema,
+    input: {
+      targetUrl: input.targetUrl,
+      crawl: input.crawl,
+      structure: input.structure,
+      risk: input.risk,
+      taskCatalog: input.taskCatalog,
+      allowedEvidenceRefIds: input.structure.pageSummary.allowedEvidenceRefIds,
+      sourceStats: input.sourceBundle.stats,
+      existingTaskProposals,
+      missingFieldMap,
+      missingTaskCount,
+      requiredTaskCount: REQUIRED_TASK_PROPOSAL_COUNT,
+    },
+    systemPrompt: LLM_STAGE_PROMPTS.tasksCompletion,
+    maxTokens: 3200,
+  });
+}
+
 async function callTaskStageCompletion(
   options: OpenAICompatibleAdapterOptions,
   input: LLMTaskStageInput,
 ): Promise<LLMStageResult<LLMTaskStageOutput>> {
+  const visibleTermSet = buildVisibleTermSet(input.structure.pageSummary);
+  const stageInput = {
+    targetUrl: input.targetUrl,
+    crawl: input.crawl,
+    structure: input.structure,
+    risk: input.risk,
+    taskCatalog: input.taskCatalog,
+    allowedEvidenceRefIds: input.structure.pageSummary.allowedEvidenceRefIds,
+    sourceStats: input.sourceBundle.stats,
+  };
+
+  let primaryResult: LLMStageResult<LLMTaskStageOutput> | null = null;
+  let recovered: LenientTaskRecoveryResult | null = null;
+  let primaryErrorMessage = '';
+
   try {
-    return await callStructuredStage<LLMTaskStageOutput>({
+    primaryResult = await callStructuredStage<LLMTaskStageOutput>({
       options,
       stage: 'tasks',
       schema: llmTaskStageSchema,
-      input: {
-        targetUrl: input.targetUrl,
-        crawl: input.crawl,
-        structure: input.structure,
-        risk: input.risk,
-        taskCatalog: input.taskCatalog,
-        allowedEvidenceRefIds: input.structure.pageSummary.allowedEvidenceRefIds,
-        sourceStats: input.sourceBundle.stats,
-      },
+      input: stageInput,
       systemPrompt: LLM_STAGE_PROMPTS.tasks,
       maxTokens: 2800,
     });
   } catch (error) {
-    const message = getErrorText(error);
-    if (!isSchemaStageErrorMessage(message)) {
+    primaryErrorMessage = getErrorText(error);
+    if (!isSchemaStageErrorMessage(primaryErrorMessage)) {
       throw error;
     }
-
-    const recovered = recoverLenientTaskStageOutput(
-      extractStageErrorRawPayload(message),
+    recovered = recoverLenientTaskStageOutput(
+      extractStageErrorRawPayload(primaryErrorMessage),
       input.taskCatalog,
       input.structure.pageSummary.allowedEvidenceRefIds,
+      visibleTermSet,
     );
+  }
 
+  const primaryOutput: LLMTaskStageOutput | null = primaryResult
+    ? primaryResult.output
+    : recovered
+      ? {
+          summary: recovered.summary,
+          prioritizedTaskIds: recovered.prioritizedTaskIds,
+          taskProposals: recovered.taskProposals,
+        }
+      : null;
+
+  if (!primaryOutput) {
+    throw new Error(primaryErrorMessage || 'STAGE_SCHEMA_INVALID:tasks:primary empty');
+  }
+
+  const missingFieldMap = recovered
+    ? recovered.missingFieldMap
+    : collectMissingFieldMap(primaryOutput.taskProposals);
+  const missingTaskCount = Math.max(0, REQUIRED_TASK_PROPOSAL_COUNT - primaryOutput.taskProposals.length);
+  const needsCompletionPass =
+    Boolean(recovered) || missingTaskCount > 0 || missingFieldMap.length > 0;
+
+  const fallbackNameById = new Map(input.taskCatalog.map((task) => [task.id, task.name]));
+  const finalizeNames = (tasks: LLMTaskProposal[]) => {
+    let rewrittenNameCount = 0;
+    let nameReadableCount = 0;
+    let nameJargonRejectedCount = 0;
+    const normalized = tasks.map((task) => {
+      const fallbackName = fallbackNameById.get(task.id) ?? task.name;
+      const renamed = sanitizeTaskName(task.name, fallbackName, {
+        visibleTermSet,
+        description: task.description,
+        testScenario: task.testScenario,
+        operationSteps: task.operationSteps,
+        successCriteria: task.successCriteria,
+      });
+      if (renamed.rewritten || renamed.name !== task.name) {
+        rewrittenNameCount += 1;
+      }
+      if (renamed.readable) {
+        nameReadableCount += 1;
+      }
+      nameJargonRejectedCount += renamed.jargonRejectedCount;
+      return {
+        ...task,
+        name: renamed.name,
+      };
+    });
+    return { normalized, rewrittenNameCount, nameReadableCount, nameJargonRejectedCount };
+  };
+
+  if (!needsCompletionPass) {
+    const finalTasks = primaryOutput.taskProposals.slice(0, REQUIRED_TASK_PROPOSAL_COUNT);
+    if (finalTasks.length < REQUIRED_TASK_PROPOSAL_COUNT) {
+      throw new Error(
+        `STAGE_SCHEMA_INVALID:tasks:LLM 任务数量不足（${finalTasks.length}/${REQUIRED_TASK_PROPOSAL_COUNT}）`,
+      );
+    }
+    const finalized = finalizeNames(finalTasks);
     return {
-      output: recovered.output,
-      attempts: Math.max(1, (options.stageRetryCount ?? 2) + 1),
-      repaired: true,
-      degraded: true,
-      quality: {
-        autoFilledCount: recovered.quality.autoFilledCount,
-        syntheticCount: recovered.quality.syntheticCount,
-        rewrittenNameCount: recovered.quality.rewrittenNameCount,
+      output: {
+        summary: primaryOutput.summary,
+        prioritizedTaskIds: primaryOutput.prioritizedTaskIds.slice(0, REQUIRED_TASK_PROPOSAL_COUNT),
+        taskProposals: finalized.normalized,
       },
-      rawSnippet: extractRawSnippet(message),
+      attempts: primaryResult?.attempts ?? Math.max(1, (options.stageRetryCount ?? 2) + 1),
+      repaired: primaryResult?.repaired ?? false,
+      rawSnippet: primaryResult?.rawSnippet ?? extractRawSnippet(primaryErrorMessage),
+      degraded: finalized.rewrittenNameCount > 0,
+      quality: {
+        autoFilledCount: 0,
+        syntheticCount: 0,
+        rewrittenNameCount: finalized.rewrittenNameCount,
+        nameRewrittenCount: finalized.rewrittenNameCount,
+        nameReadableCount: finalized.nameReadableCount,
+        namePolishPasses: 1,
+        nameJargonRejectedCount: finalized.nameJargonRejectedCount,
+        llmCompletionPasses: 0,
+        llmGeneratedCount: finalized.normalized.length,
+        nonLlmGeneratedCount: 0,
+      },
     };
   }
+
+  const completionResult = await callTaskCompletionPass(
+    options,
+    input,
+    primaryOutput.taskProposals,
+    missingFieldMap,
+    missingTaskCount,
+  );
+  const mergedTasks = mergeLlmTaskProposals(
+    primaryOutput.taskProposals,
+    completionResult.output.taskProposals,
+  )
+    .filter((task) => collectTaskMissingFields(task).length === 0)
+    .slice(0, REQUIRED_TASK_PROPOSAL_COUNT);
+
+  if (mergedTasks.length < REQUIRED_TASK_PROPOSAL_COUNT) {
+    throw new Error(
+      `STAGE_SCHEMA_INVALID:tasks:LLM completion 任务数量不足（${mergedTasks.length}/${REQUIRED_TASK_PROPOSAL_COUNT}）`,
+    );
+  }
+
+  const mergedPrioritizedTaskIds = [
+    ...new Set([
+      ...completionResult.output.prioritizedTaskIds,
+      ...primaryOutput.prioritizedTaskIds,
+    ]),
+  ].slice(0, REQUIRED_TASK_PROPOSAL_COUNT);
+
+  const finalized = finalizeNames(mergedTasks);
+
+  return {
+    output: {
+      summary: [primaryOutput.summary, completionResult.output.summary].filter(Boolean).join('；'),
+      prioritizedTaskIds:
+        mergedPrioritizedTaskIds.length > 0
+          ? mergedPrioritizedTaskIds
+          : finalized.normalized.map((task) => task.id),
+      taskProposals: finalized.normalized,
+    },
+    attempts:
+      (primaryResult?.attempts ?? Math.max(1, (options.stageRetryCount ?? 2) + 1)) +
+      completionResult.attempts,
+    repaired: Boolean(primaryResult?.repaired) || completionResult.repaired || Boolean(recovered),
+    rawSnippet: completionResult.rawSnippet ?? primaryResult?.rawSnippet ?? extractRawSnippet(primaryErrorMessage),
+    degraded: true,
+    quality: {
+      autoFilledCount: 0,
+      syntheticCount: Math.max(0, finalized.normalized.length - primaryOutput.taskProposals.length),
+      rewrittenNameCount:
+        (recovered?.quality.rewrittenNameCount ?? 0) + finalized.rewrittenNameCount,
+      nameRewrittenCount:
+        (recovered?.quality.nameRewrittenCount ?? 0) + finalized.rewrittenNameCount,
+      nameReadableCount: finalized.nameReadableCount,
+      namePolishPasses: 1 + (recovered?.quality.namePolishPasses ?? 0),
+      nameJargonRejectedCount:
+        (recovered?.quality.nameJargonRejectedCount ?? 0) + finalized.nameJargonRejectedCount,
+      llmCompletionPasses: 1,
+      llmGeneratedCount: finalized.normalized.length,
+      nonLlmGeneratedCount: 0,
+    },
+  };
 }
 
 async function probeChatCompletion(options: OpenAICompatibleAdapterOptions): Promise<void> {

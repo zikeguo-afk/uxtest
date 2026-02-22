@@ -1,12 +1,17 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from '@/App';
 import { defaultTasks } from '@/data/mock/tasks';
 import { mockProvider } from '@/services/mockProvider';
 import type { DiagnosisResult } from '@/services/uxAgentProvider';
 
+beforeEach(() => {
+  vi.useRealTimers();
+});
+
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -143,7 +148,7 @@ describe('App runtime status visibility', () => {
       tasks: defaultTasks.slice(0, 15).map((task, index) => ({
         ...task,
         id: index + 1,
-        name: `用户完成第${index + 1}项任务`,
+        name: `完成第${index + 1}项任务`,
         selected: false,
       })),
       taskGeneration: {
@@ -156,6 +161,13 @@ describe('App runtime status visibility', () => {
           syntheticCount: 4,
           rewrittenNameCount: 3,
           weakGateWarnings: 1,
+          llmCompletionPasses: 1,
+          llmGeneratedCount: 15,
+          nonLlmGeneratedCount: 0,
+          nameRewrittenCount: 3,
+          nameReadableCount: 12,
+          namePolishPasses: 1,
+          nameJargonRejectedCount: 2,
         },
       },
       source: 'llm-4stage',
@@ -168,6 +180,8 @@ describe('App runtime status visibility', () => {
     fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
 
     expect(await screen.findByText('任务已自动补全（可继续）', {}, { timeout: 10000 })).toBeTruthy();
+    expect(screen.getByText(/来源统计：LLM 补全轮次 1，LLM 生成 15，非 LLM 任务 0/)).toBeTruthy();
+    expect(screen.getByText(/命名可读化：可读名称 12，名称改写 3，术语替换 2，修正轮次 1/)).toBeTruthy();
     expect(
       (screen.getByRole('button', { name: '下一步：选择任务与测试人员' }) as HTMLButtonElement)
         .disabled,

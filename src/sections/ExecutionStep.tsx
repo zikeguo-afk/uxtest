@@ -664,7 +664,7 @@ export function ExecutionStep({
                           <div className="text-xs text-slate-500">标准步骤 {item.order}</div>
                           <p className="text-sm text-slate-200 mt-1">{item.operationStep}</p>
 
-                          <div className="text-xs text-slate-500 mt-2">该用户完成情况</div>
+                          <div className="text-xs text-slate-500 mt-2">该用户执行情况</div>
                           {item.executionStep ? (
                             <div className="mt-1 space-y-1">
                               <p className="text-sm text-slate-300">{item.executionStep.content}</p>

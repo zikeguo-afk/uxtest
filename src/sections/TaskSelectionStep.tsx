@@ -79,7 +79,7 @@ export function TaskSelectionStep({
   const detailMap = useMemo(() => new Map(tasks.map((task) => [task.id, resolveTaskDetail(task)])), [tasks]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-h-0">
       <div className="flex items-center gap-3 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg animate-fade-in">
         <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0" />
         <div className="text-sm text-amber-200">
@@ -87,10 +87,10 @@ export function TaskSelectionStep({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch lg:min-h-[680px] lg:h-[72vh]">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch min-h-0 overflow-hidden lg:min-h-[680px] lg:h-[72vh]">
         <div className="animate-slide-in-left flex h-[56vh] md:h-[62vh] lg:h-full" style={{ animationDelay: '100ms' }}>
           <Card data-testid="task-selection-left-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full overflow-hidden">
-            <CardHeader>
+            <CardHeader className="shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
@@ -108,8 +108,8 @@ export function TaskSelectionStep({
                 </Badge>
               </div>
             </CardHeader>
-            <CardContent className="flex-1 min-h-0">
-              <div className="space-y-2 h-full overflow-y-auto overscroll-contain pr-2">
+            <CardContent className="flex-1 min-h-0 overflow-hidden">
+              <div className="space-y-2 h-full min-h-0 overflow-y-auto overscroll-contain pr-3">
                 {tasks.map((task, index) => (
                   <div
                     key={task.id}
@@ -157,7 +157,8 @@ export function TaskSelectionStep({
 
                       {detailTaskId === task.id && (
                         <div
-                          className="mt-2 rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-3"
+                          data-testid="task-selection-task-detail"
+                          className="mt-2 rounded-lg border border-slate-800 bg-slate-900/40 p-3 space-y-3 max-h-56 overflow-y-auto overscroll-contain"
                           onClick={(event) => event.stopPropagation()}
                         >
                           <div>
@@ -166,7 +167,7 @@ export function TaskSelectionStep({
                           </div>
                           <div>
                             <div className="text-xs text-slate-400 mb-1">操作步骤</div>
-                            <ol className="space-y-1">
+                            <ol className="space-y-1 break-words">
                               {(detailMap.get(task.id)?.operationSteps ?? []).map((step, stepIndex) => (
                                 <li key={`${task.id}-op-${stepIndex}`} className="text-xs text-slate-300">
                                   {stepIndex + 1}. {step}
@@ -176,7 +177,7 @@ export function TaskSelectionStep({
                           </div>
                           <div>
                             <div className="text-xs text-slate-400 mb-1">成功标准</div>
-                            <ul className="space-y-1">
+                            <ul className="space-y-1 break-words">
                               {(detailMap.get(task.id)?.successCriteria ?? []).map((criterion) => (
                                 <li key={`${task.id}-criterion-${criterion}`} className="text-xs text-emerald-300">
                                   ✓ {criterion}
@@ -196,7 +197,7 @@ export function TaskSelectionStep({
 
         <div className="animate-slide-in-right flex h-[56vh] md:h-[62vh] lg:h-full" style={{ animationDelay: '200ms' }}>
           <Card data-testid="task-selection-right-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full overflow-hidden">
-            <CardHeader>
+            <CardHeader className="shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
@@ -212,8 +213,8 @@ export function TaskSelectionStep({
                 <Badge className="bg-purple-500/20 text-purple-400 border-0">{totalSelectedPeople}</Badge>
               </div>
             </CardHeader>
-            <CardContent className="flex-1 min-h-0">
-              <div className="space-y-3 h-full overflow-y-auto overscroll-contain pr-2">
+            <CardContent className="flex-1 min-h-0 overflow-hidden">
+              <div className="space-y-3 h-full min-h-0 overflow-y-auto overscroll-contain pr-3">
                 {categoryTemplates.map((category, index) => {
                   const count = selectionMap.get(category.id) ?? 0;
                   return (

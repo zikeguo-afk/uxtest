@@ -1,13 +1,18 @@
 import { act } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import App from '@/App';
 import { defaultTasks } from '@/data/mock/tasks';
 import { mockProvider } from '@/services/mockProvider';
 
+beforeEach(() => {
+  vi.useRealTimers();
+});
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('App smoke flow', () => {
@@ -109,7 +114,7 @@ describe('App smoke flow', () => {
       tasks: Array.from({ length: 15 }, (_, index) => ({
         ...defaultTasks[index % defaultTasks.length],
         id: index + 1,
-        name: `用户完成第${index + 1}项操作`,
+        name: `完成第${index + 1}项操作`,
         selected: false,
       })),
       taskGeneration: {
@@ -122,6 +127,13 @@ describe('App smoke flow', () => {
           syntheticCount: 5,
           rewrittenNameCount: 4,
           weakGateWarnings: 2,
+          llmCompletionPasses: 1,
+          llmGeneratedCount: 15,
+          nonLlmGeneratedCount: 0,
+          nameRewrittenCount: 4,
+          nameReadableCount: 11,
+          namePolishPasses: 1,
+          nameJargonRejectedCount: 3,
         },
       },
       source: 'llm-4stage',

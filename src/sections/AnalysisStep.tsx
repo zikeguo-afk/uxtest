@@ -271,7 +271,7 @@ export function AnalysisStep({
                 <div>
                   <CardTitle className="text-amber-100">任务已自动补全（可继续）</CardTitle>
                   <CardDescription className="text-amber-200/80">
-                    本次任务由 API 自动补全后输出为 15 条，可直接进入下一步。
+                    本次任务由 LLM 二轮补全后输出为 15 条，可直接进入下一步。
                   </CardDescription>
                 </div>
               </div>
@@ -284,6 +284,19 @@ export function AnalysisStep({
                 {taskGeneration.quality?.syntheticCount ?? 0}，名称重写{' '}
                 {taskGeneration.quality?.rewrittenNameCount ?? 0}，弱门禁告警{' '}
                 {taskGeneration.quality?.weakGateWarnings ?? 0}
+              </div>
+              <div>
+                来源统计：LLM 补全轮次 {taskGeneration.quality?.llmCompletionPasses ?? 0}，LLM 生成{' '}
+                {taskGeneration.quality?.llmGeneratedCount ?? tasks.length}，非 LLM 任务{' '}
+                {taskGeneration.quality?.nonLlmGeneratedCount ?? 0}
+              </div>
+              <div>
+                命名可读化：可读名称 {taskGeneration.quality?.nameReadableCount ?? tasks.length}，名称改写{' '}
+                {taskGeneration.quality?.nameRewrittenCount ??
+                  taskGeneration.quality?.rewrittenNameCount ??
+                  0}
+                ，术语替换 {taskGeneration.quality?.nameJargonRejectedCount ?? 0}，修正轮次{' '}
+                {taskGeneration.quality?.namePolishPasses ?? 0}
               </div>
             </CardContent>
           </Card>

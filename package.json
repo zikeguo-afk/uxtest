@@ -9,10 +9,11 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "server:dev": "tsx watch server/src/index.ts",
+    "server:install-browser": "playwright install chromium",
     "server:build": "tsc -p server/tsconfig.json",
     "server:start": "node server/dist/index.js",
     "typecheck": "tsc -b --pretty false",
-    "test:smoke": "vitest run",
+    "test:smoke": "vitest run --maxWorkers=1",
     "check": "npm run typecheck && npm run lint && npm run test:smoke"
   },
   "dependencies": {
@@ -55,6 +56,7 @@
     "input-otp": "^1.4.2",
     "lucide-react": "^0.562.0",
     "next-themes": "^0.4.6",
+    "playwright": "^1.58.2",
     "react": "^19.2.0",
     "react-day-picker": "^9.13.0",
     "react-dom": "^19.2.0",

@@ -16,15 +16,23 @@ import type {
   LLMEnhanceInput,
   LLMEnhanceOutput,
   LLMTaskProposal,
+  LLMPersonaGenerationInput,
+  LLMPersonaGenerationOutput,
+  LLMExecutionPlanInput,
+  LLMExecutionPlanOutput,
+  LLMStepDecisionInput,
+  LLMStepDecisionOutput,
 } from '../types/domain';
 import {
   llmCrawlStageSchema,
   llmRiskStageSchema,
   llmStructureStageSchema,
-  llmTaskStageSchema,
+  llmTaskStageLenientSchema,
 } from './stage-schemas';
 import { LLM_STAGE_PROMPTS } from './prompts/diagnosis-stages';
 import { loadPromptFromEnv } from './prompt-loader';
+import { EXECUTION_PLANNER_SYSTEM_PROMPT } from './prompts/execution-planner';
+import { STEP_POLICY_SYSTEM_PROMPT } from './prompts/step-policy';
 
 interface OpenAICompatibleAdapterOptions {
   baseUrl: string;
@@ -1448,6 +1456,180 @@ async function callStageSummaryCompletion(
   }
 }
 
+async function callJsonObjectCompletion(
+  options: OpenAICompatibleAdapterOptions,
+  systemPrompt: string,
+  input: unknown,
+  maxTokens: number,
+  temperature: number,
+): Promise<Record<string, unknown>> {
+  const body = {
+    model: options.model,
+    temperature: Math.min(Math.max(temperature, 0), 0.7),
+    max_tokens: maxTokens,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: JSON.stringify(input, null, 2),
+      },
+    ],
+  };
+
+  const timeout = withTimeoutSignal(options.timeoutMs);
+  try {
+    const content = await requestChatContent(options, body, timeout);
+    const parsed = safeParseJson(content);
+    if (!parsed) {
+      throw new Error(`llm json parse failed: ${extractRawSnippet(content)}`);
+    }
+    return parsed;
+  } finally {
+    timeout.cancel();
+  }
+}
+
+function toTraitProfile(raw: unknown, fallback: LLMPersonaGenerationInput['baseTraits']) {
+  if (!raw || typeof raw !== 'object') {
+    return fallback;
+  }
+  const source = raw as Record<string, unknown>;
+  const toNumber = (value: unknown, defaultValue: number) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return defaultValue;
+    }
+    return clamp(Math.round(parsed), 0, 100);
+  };
+  return {
+    patience: toNumber(source.patience, fallback.patience),
+    techSavvy: toNumber(source.techSavvy, fallback.techSavvy),
+    attention: toNumber(source.attention, fallback.attention),
+  };
+}
+
+async function callPersonaGenerationCompletion(
+  options: OpenAICompatibleAdapterOptions,
+  input: LLMPersonaGenerationInput,
+): Promise<LLMPersonaGenerationOutput> {
+  const prompt = [
+    '你是 UXAgent 的人设生成器。',
+    '输入是一个用户类别模板和人数，请生成同类但有微小差异的个体档案。',
+    '必须输出 JSON：{"profiles":[{"persona":"...","goal":"...","behaviorBias":"...","languageStyle":"...","frictionSensitivity":45,"traits":{"patience":50,"techSavvy":60,"attention":70}}]}',
+    '要求：',
+    '1) profiles 数量必须等于 count。',
+    '2) traits 数值在 0-100。',
+    '3) 文案中文，避免空字段。',
+  ].join('\n');
+  const payload = await callJsonObjectCompletion(options, prompt, input, 1400, 0.35);
+  const profilesRaw = Array.isArray(payload.profiles) ? payload.profiles : [];
+  const profiles = profilesRaw.slice(0, input.count).map((item, index) => {
+    const source = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+    return {
+      persona: String(source.persona ?? `${input.categoryPersona}（样本${index + 1}）`).trim() || `${input.categoryPersona}（样本${index + 1}）`,
+      goal: String(source.goal ?? input.categoryGoal).trim() || input.categoryGoal,
+      behaviorBias: String(source.behaviorBias ?? '平衡效率与准确').trim() || '平衡效率与准确',
+      languageStyle: String(source.languageStyle ?? '简洁').trim() || '简洁',
+      frictionSensitivity: clamp(Number(source.frictionSensitivity ?? 50), 0, 100),
+      traits: toTraitProfile(source.traits, input.baseTraits),
+    };
+  });
+
+  if (profiles.length < input.count) {
+    while (profiles.length < input.count) {
+      profiles.push({
+        persona: `${input.categoryPersona}（补齐样本${profiles.length + 1}）`,
+        goal: input.categoryGoal,
+        behaviorBias: '平衡效率与准确',
+        languageStyle: '简洁',
+        frictionSensitivity: 50,
+        traits: { ...input.baseTraits },
+      });
+    }
+  }
+
+  return { profiles };
+}
+
+async function callExecutionPlanCompletion(
+  options: OpenAICompatibleAdapterOptions,
+  input: LLMExecutionPlanInput,
+): Promise<LLMExecutionPlanOutput> {
+  const payload = await callJsonObjectCompletion(
+    options,
+    EXECUTION_PLANNER_SYSTEM_PROMPT,
+    input,
+    1200,
+    0.25,
+  );
+
+  const plannedStepsRaw = Array.isArray(payload.plannedSteps) ? payload.plannedSteps : [];
+  const plannedSteps = plannedStepsRaw
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item.length > 0)
+    .slice(0, 8);
+
+  return {
+    summary: String(payload.summary ?? '').trim() || `规划任务：${input.task.name}`,
+    plannedSteps:
+      plannedSteps.length >= 3
+        ? plannedSteps
+        : (input.task.operationSteps && input.task.operationSteps.length >= 3
+          ? input.task.operationSteps.slice(0, 6)
+          : ['进入任务入口', '执行关键操作', '确认结果反馈']),
+  };
+}
+
+async function callStepDecisionCompletion(
+  options: OpenAICompatibleAdapterOptions,
+  input: LLMStepDecisionInput,
+): Promise<LLMStepDecisionOutput> {
+  const payload = await callJsonObjectCompletion(
+    options,
+    STEP_POLICY_SYSTEM_PROMPT,
+    input,
+    1000,
+    0.2,
+  );
+  const actionRaw = payload.action;
+  if (!actionRaw || typeof actionRaw !== 'object') {
+    return {
+      action: {
+        type: 'wait',
+        waitMs: 900,
+        reason: 'LLM 未返回有效 action，先等待页面稳定',
+      },
+    };
+  }
+
+  const action = actionRaw as Record<string, unknown>;
+  const type = String(action.type ?? '').trim();
+  const allowedTypes = new Set(['click', 'type', 'select', 'wait', 'scroll', 'assert', 'finish', 'fail']);
+  if (!allowedTypes.has(type)) {
+    return {
+      action: {
+        type: 'wait',
+        waitMs: 900,
+        reason: 'LLM action type 非法，先等待页面稳定',
+      },
+    };
+  }
+
+  return {
+    action: {
+      type: type as LLMStepDecisionOutput['action']['type'],
+      selector: action.selector ? String(action.selector) : undefined,
+      text: action.text ? String(action.text) : undefined,
+      optionValue: action.optionValue ? String(action.optionValue) : undefined,
+      waitMs: action.waitMs ? clamp(Number(action.waitMs), 100, 20_000) : undefined,
+      direction: action.direction === 'up' ? 'up' : action.direction === 'down' ? 'down' : undefined,
+      expected: action.expected ? String(action.expected) : undefined,
+      reason: action.reason ? String(action.reason) : undefined,
+    },
+  };
+}
+
 function toSourcePayloadForLLM(input: {
   targetUrl: string;
   sourceBundle: LLMCrawlStageInput['sourceBundle'];
@@ -1539,6 +1721,12 @@ async function callRiskStageCompletion(
 
 function collectTaskMissingFields(task: LLMTaskProposal): string[] {
   const missing: string[] = [];
+  if (!task.name || !String(task.name).trim()) {
+    missing.push('name');
+  }
+  if (!task.description || !String(task.description).trim()) {
+    missing.push('description');
+  }
   if (!task.testScenario || !String(task.testScenario).trim()) {
     missing.push('testScenario');
   }
@@ -1628,6 +1816,46 @@ function mergeLlmTaskProposals(
   return order.map((key) => store.get(key)?.task).filter((item): item is LLMTaskProposal => Boolean(item));
 }
 
+function normalizeTaskStageOutput(
+  output: Partial<LLMTaskStageOutput> | null,
+  taskCatalog: LLMAnalysisInput['taskCatalog'],
+): LLMTaskStageOutput {
+  const proposals = Array.isArray(output?.taskProposals) ? output?.taskProposals : [];
+  const normalizedProposals: LLMTaskProposal[] = proposals
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => {
+      const raw = item as Partial<LLMTaskProposal> & Record<string, unknown>;
+      return {
+        id: typeof raw.id === 'number' ? raw.id : taskCatalog[0]?.id ?? 1,
+        name: typeof raw.name === 'string' ? raw.name.trim() : '',
+        description: typeof raw.description === 'string' ? raw.description.trim() : '',
+        difficulty: normalizeDifficulty(raw.difficulty),
+        estimatedDuration: typeof raw.estimatedDuration === 'string' ? raw.estimatedDuration.trim() : undefined,
+        testScenario: typeof raw.testScenario === 'string' ? raw.testScenario.trim() : undefined,
+        operationSteps: normalizeStringList(raw.operationSteps, 12),
+        successCriteria: normalizeStringList(raw.successCriteria, 10),
+        tags: normalizeStringList(raw.tags, 8),
+        evidenceRefs: normalizeStringList(raw.evidenceRefs, 6),
+        evidenceReason: typeof raw.evidenceReason === 'string' ? raw.evidenceReason.trim() : undefined,
+      };
+    });
+
+  const summary =
+    typeof output?.summary === 'string' && output.summary.trim().length > 0
+      ? output.summary.trim()
+      : '任务生成完成';
+  const prioritizedTaskIds =
+    Array.isArray(output?.prioritizedTaskIds) && output.prioritizedTaskIds.length > 0
+      ? output.prioritizedTaskIds
+      : normalizedProposals.map((task) => task.id);
+
+  return {
+    summary,
+    prioritizedTaskIds,
+    taskProposals: normalizedProposals,
+  };
+}
+
 function polishReadableTaskProposals(
   taskProposals: LLMTaskProposal[],
   fallbackCatalog: LLMAnalysisInput['taskCatalog'],
@@ -1660,7 +1888,7 @@ async function callTaskCompletionPass(
   return callStructuredStage<LLMTaskStageOutput>({
     options,
     stage: 'tasks',
-    schema: llmTaskStageSchema,
+    schema: llmTaskStageLenientSchema,
     input: {
       targetUrl: input.targetUrl,
       crawl: input.crawl,
@@ -1702,7 +1930,7 @@ async function callTaskStageCompletion(
     primaryResult = await callStructuredStage<LLMTaskStageOutput>({
       options,
       stage: 'tasks',
-      schema: llmTaskStageSchema,
+      schema: llmTaskStageLenientSchema,
       input: stageInput,
       systemPrompt: LLM_STAGE_PROMPTS.tasks,
       maxTokens: 2800,
@@ -1721,13 +1949,16 @@ async function callTaskStageCompletion(
   }
 
   const primaryOutput: LLMTaskStageOutput | null = primaryResult
-    ? primaryResult.output
+    ? normalizeTaskStageOutput(primaryResult.output, input.taskCatalog)
     : recovered
-      ? {
-          summary: recovered.summary,
-          prioritizedTaskIds: recovered.prioritizedTaskIds,
-          taskProposals: recovered.taskProposals,
-        }
+      ? normalizeTaskStageOutput(
+          {
+            summary: recovered.summary,
+            prioritizedTaskIds: recovered.prioritizedTaskIds,
+            taskProposals: recovered.taskProposals,
+          },
+          input.taskCatalog,
+        )
       : null;
 
   if (!primaryOutput) {
@@ -1803,21 +2034,36 @@ async function callTaskStageCompletion(
     };
   }
 
-  const completionResult = await callTaskCompletionPass(
-    options,
-    input,
-    primaryOutput.taskProposals,
-    missingFieldMap,
-    missingTaskCount,
-  );
+  let completionResult: LLMStageResult<LLMTaskStageOutput> | null = null;
+  try {
+    completionResult = await callTaskCompletionPass(
+      options,
+      input,
+      primaryOutput.taskProposals,
+      missingFieldMap,
+      missingTaskCount,
+    );
+  } catch {
+    completionResult = null;
+  }
+
+  const completionOutput = completionResult
+    ? normalizeTaskStageOutput(completionResult.output, input.taskCatalog)
+    : null;
+
   const mergedTasks = mergeLlmTaskProposals(
     primaryOutput.taskProposals,
-    completionResult.output.taskProposals,
+    completionOutput?.taskProposals ?? [],
   )
     .filter((task) => collectTaskMissingFields(task).length === 0)
     .slice(0, REQUIRED_TASK_PROPOSAL_COUNT);
 
   if (mergedTasks.length < REQUIRED_TASK_PROPOSAL_COUNT) {
+    if (!completionResult) {
+      throw new Error(
+        `STAGE_SCHEMA_INVALID:tasks:LLM completion 解析失败，任务数量不足（${mergedTasks.length}/${REQUIRED_TASK_PROPOSAL_COUNT}）`,
+      );
+    }
     throw new Error(
       `STAGE_SCHEMA_INVALID:tasks:LLM completion 任务数量不足（${mergedTasks.length}/${REQUIRED_TASK_PROPOSAL_COUNT}）`,
     );
@@ -1825,7 +2071,7 @@ async function callTaskStageCompletion(
 
   const mergedPrioritizedTaskIds = [
     ...new Set([
-      ...completionResult.output.prioritizedTaskIds,
+      ...(completionOutput?.prioritizedTaskIds ?? []),
       ...primaryOutput.prioritizedTaskIds,
     ]),
   ].slice(0, REQUIRED_TASK_PROPOSAL_COUNT);
@@ -1834,7 +2080,7 @@ async function callTaskStageCompletion(
 
   return {
     output: {
-      summary: [primaryOutput.summary, completionResult.output.summary].filter(Boolean).join('；'),
+      summary: [primaryOutput.summary, completionOutput?.summary].filter(Boolean).join('；'),
       prioritizedTaskIds:
         mergedPrioritizedTaskIds.length > 0
           ? mergedPrioritizedTaskIds
@@ -1843,9 +2089,9 @@ async function callTaskStageCompletion(
     },
     attempts:
       (primaryResult?.attempts ?? Math.max(1, (options.stageRetryCount ?? 2) + 1)) +
-      completionResult.attempts,
-    repaired: Boolean(primaryResult?.repaired) || completionResult.repaired || Boolean(recovered),
-    rawSnippet: completionResult.rawSnippet ?? primaryResult?.rawSnippet ?? extractRawSnippet(primaryErrorMessage),
+      (completionResult?.attempts ?? 1),
+    repaired: Boolean(primaryResult?.repaired) || Boolean(completionResult?.repaired) || Boolean(recovered),
+    rawSnippet: completionResult?.rawSnippet ?? primaryResult?.rawSnippet ?? extractRawSnippet(primaryErrorMessage),
     degraded: true,
     quality: {
       autoFilledCount: 0,
@@ -1912,6 +2158,15 @@ export function createOpenAICompatibleAdapter(
 
   return {
     kind: 'openai-compatible',
+    async generatePersonas(input: LLMPersonaGenerationInput): Promise<LLMPersonaGenerationOutput> {
+      return callPersonaGenerationCompletion(normalizedOptions, input);
+    },
+    async planExecutionCase(input: LLMExecutionPlanInput): Promise<LLMExecutionPlanOutput> {
+      return callExecutionPlanCompletion(normalizedOptions, input);
+    },
+    async decideExecutionStep(input: LLMStepDecisionInput): Promise<LLMStepDecisionOutput> {
+      return callStepDecisionCompletion(normalizedOptions, input);
+    },
     async runCrawlStage(input: LLMCrawlStageInput): Promise<LLMStageResult<LLMCrawlStageOutput>> {
       return callCrawlStageCompletion(normalizedOptions, input);
     },

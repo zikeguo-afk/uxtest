@@ -2,6 +2,19 @@ import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import App from '@/App';
+import { defaultTasks } from '@/data/mock/tasks';
+import { mockProvider } from '@/services/mockProvider';
+
+function buildDetailedTasks() {
+  return defaultTasks.slice(0, 15).map((task, index) => ({
+    ...task,
+    id: index + 1,
+    selected: false,
+    testScenario: `完成「${task.name}」的页面流程。`,
+    operationSteps: ['进入入口', '执行关键操作', '确认反馈结果'],
+    successCriteria: ['任务可完成', '结果可确认'],
+  }));
+}
 
 afterEach(() => {
   cleanup();
@@ -11,6 +24,23 @@ afterEach(() => {
 describe('Task selection rules', () => {
   it('enforces 3-10 task gating with person count requirement', async () => {
     vi.useFakeTimers();
+    vi.spyOn(mockProvider, 'getDiagnosis').mockResolvedValueOnce({
+      items: [
+        {
+          dimension: '结构化导航',
+          status: 'success',
+          description: '任务详情可用。',
+        },
+      ],
+      tasks: buildDetailedTasks(),
+      taskGeneration: {
+        status: 'success',
+        code: 'TEST_TASKS_READY',
+        message: '任务生成成功',
+        blocked: false,
+      },
+      source: 'llm-4stage',
+    });
     render(<App />);
 
     fireEvent.change(screen.getByPlaceholderText('https://www.example.com'), {

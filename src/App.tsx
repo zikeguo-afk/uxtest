@@ -118,6 +118,7 @@ function App() {
         return (
           <ExecutionStep
             executions={executions}
+            taskCatalog={currentRunSnapshot?.taskCatalog}
             selectedCaseId={selectedCaseId}
             qaHistory={qaHistory}
             onSelectCase={selectCase}
@@ -195,7 +196,15 @@ function App() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {renderStep()}
+        <div
+          className={
+            currentStep === 'task-selection'
+              ? 'lg:h-[calc(100vh-14rem)] lg:min-h-[680px] lg:overflow-hidden lg:min-h-0'
+              : ''
+          }
+        >
+          {renderStep()}
+        </div>
       </main>
 
       <Toaster />

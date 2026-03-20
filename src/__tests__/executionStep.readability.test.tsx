@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { ExecutionStep } from '@/sections/ExecutionStep';
-import type { QAHistoryItem, TaskExecution } from '@/types';
+import type { QAHistoryItem, Task, TaskExecution } from '@/types';
 
 const executionCases: TaskExecution[] = [
   {
@@ -43,6 +43,26 @@ const executionCases: TaskExecution[] = [
 ];
 
 const emptyHistory: QAHistoryItem[] = [];
+const taskCatalog: Task[] = [
+  {
+    id: 1,
+    name: '新用户注册',
+    description: '完成账号注册流程',
+    selected: false,
+    testScenario: '访问注册页面并完成注册。',
+    operationSteps: ['进入注册入口', '填写注册信息并提交', '确认注册成功反馈'],
+    successCriteria: ['注册可完成', '反馈可理解'],
+  },
+  {
+    id: 2,
+    name: '登录账号',
+    description: '使用已有凭证登录',
+    selected: false,
+    testScenario: '输入凭证并完成登录。',
+    operationSteps: ['进入登录入口', '填写账号密码并提交', '确认登录成功'],
+    successCriteria: ['登录成功', '跳转路径正确'],
+  },
+];
 
 afterEach(() => {
   cleanup();
@@ -55,6 +75,7 @@ describe('ExecutionStep readability', () => {
     render(
       <ExecutionStep
         executions={executionCases}
+        taskCatalog={taskCatalog}
         selectedCaseId="run-case-001"
         qaHistory={emptyHistory}
         onSelectCase={vi.fn()}

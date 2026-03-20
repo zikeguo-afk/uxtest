@@ -1,14 +1,20 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import { Agent } from 'undici';
-import type { Dispatcher } from 'undici';
 import type { CollectedSourceArtifact, CollectedSourceBundle, CollectedSourceFailure } from '../types/domain';
 
 const REQUEST_UA = 'UXAgent/1.0 (source-collector)';
 const MAIN_DOC_ARTIFACT_ID = 'artifact-main-document';
 
-interface NodeFetchInit extends RequestInit {
-  dispatcher?: Dispatcher;
+type NodeFetchInit = RequestInit & { dispatcher?: unknown };
+type NodeResponse = Awaited<ReturnType<typeof fetch>>;
+
+function callNodeFetch(url: string, init: NodeFetchInit): Promise<NodeResponse> {
+  const fetchFn = globalThis.fetch as unknown as (
+    input: string,
+    init?: NodeFetchInit,
+  ) => Promise<NodeResponse>;
+  return fetchFn(url, init);
 }
 
 export interface SourceCollectOptions {
@@ -117,9 +123,9 @@ async function fetchWithTlsFallback(
   url: string,
   init: NodeFetchInit,
   allowInsecureTls: boolean,
-): Promise<Response> {
+): Promise<NodeResponse> {
   try {
-    return await fetch(url, init);
+    return await callNodeFetch(url, init);
   } catch (error) {
     if (!allowInsecureTls || !isTlsCertificateError(error)) {
       throw error;
@@ -131,7 +137,7 @@ async function fetchWithTlsFallback(
       },
     });
     try {
-      return await fetch(url, { ...init, dispatcher: insecureAgent });
+      return await callNodeFetch(url, { ...init, dispatcher: insecureAgent });
     } finally {
       await insecureAgent.close();
     }
@@ -143,7 +149,7 @@ async function fetchWithRetry(
   init: NodeFetchInit,
   allowInsecureTls: boolean,
   options: { maxAttempts?: number; backoffMs?: number } = {},
-): Promise<Response> {
+): Promise<NodeResponse> {
   const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
   const backoffMs = Math.max(0, options.backoffMs ?? 300);
   const attemptErrors: string[] = [];
@@ -279,7 +285,7 @@ export async function collectSourceBundle(
     Math.max(2_000, options.timeoutMs),
   );
 
-  let mainResponse: Response;
+  let mainResponse: NodeResponse;
   try {
     mainResponse = await fetchWithRetry(
       normalizedUrl,
@@ -352,7 +358,7 @@ export async function collectSourceBundle(
         () => controller.abort(),
         Math.max(1_500, Math.min(options.timeoutMs, 10_000)),
       );
-      let response: Response;
+      let response: NodeResponse;
       try {
         response = await fetchWithRetry(
           resourceUrl,

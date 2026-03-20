@@ -2,6 +2,62 @@ import type { LLMAdapter } from './adapter';
 
 export const mockLLMAdapter: LLMAdapter = {
   kind: 'mock',
+  generatePersonas(input) {
+    return {
+      profiles: Array.from({ length: input.count }, (_, index) => ({
+        persona: `${input.categoryPersona}（样本${index + 1}）`,
+        goal: input.categoryGoal,
+        behaviorBias: index % 2 === 0 ? '谨慎操作' : '效率优先',
+        languageStyle: index % 2 === 0 ? '简洁' : '详细',
+        frictionSensitivity: Math.min(100, 45 + index * 3),
+        traits: {
+          patience: Math.max(0, Math.min(100, input.baseTraits.patience + (index % 3) - 1)),
+          techSavvy: Math.max(0, Math.min(100, input.baseTraits.techSavvy + (index % 5) - 2)),
+          attention: Math.max(0, Math.min(100, input.baseTraits.attention + (index % 4) - 1)),
+        },
+      })),
+    };
+  },
+  planExecutionCase(input) {
+    const plannedSteps = input.task.operationSteps && input.task.operationSteps.length > 0
+      ? input.task.operationSteps.slice(0, 6)
+      : ['打开页面并定位入口', '执行关键操作', '确认结果反馈'];
+
+    return {
+      summary: `mock 计划：${input.persona.name} 将完成「${input.task.name}」`,
+      plannedSteps,
+    };
+  },
+  decideExecutionStep(input) {
+    const step = input.currentStepIndex;
+    const hints = input.pageObservation.elementHints;
+    if (step >= input.plannedSteps.length) {
+      return {
+        action: {
+          type: 'finish',
+          reason: '已完成计划步骤',
+        },
+      };
+    }
+    if (hints.length === 0) {
+      return {
+        action: {
+          type: 'wait',
+          waitMs: 800,
+          reason: '等待页面加载交互元素',
+        },
+      };
+    }
+
+    const target = hints[step % hints.length];
+    return {
+      action: {
+        type: 'click',
+        selector: target.selector,
+        reason: `执行步骤 ${step + 1}: ${input.plannedSteps[step]}`,
+      },
+    };
+  },
   enhanceInference(input) {
     return {
       answer: input.draftAnswer,

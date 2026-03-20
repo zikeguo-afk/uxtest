@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
-import { taskDetailTemplates } from '@/data/mock/taskDetailTemplates';
 import {
   ArrowRight,
   CheckCircle,
@@ -19,10 +18,11 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react';
-import type { QAHistoryItem, TaskExecution, TaskStatus } from '@/types';
+import type { QAHistoryItem, Task, TaskExecution, TaskStatus } from '@/types';
 
 interface ExecutionStepProps {
   executions: TaskExecution[];
+  taskCatalog?: Task[];
   selectedCaseId: string | null;
   qaHistory: QAHistoryItem[];
   onSelectCase: (caseId: string) => void;
@@ -54,6 +54,16 @@ interface PlaybackState {
   isPlaying: boolean;
   isFinished: boolean;
   speed: 1 | 2;
+}
+
+interface TaskDetailView {
+  taskId: number;
+  title: string;
+  testScenario: string;
+  operationSteps: string[];
+  successCriteria: string[];
+  isComplete: boolean;
+  missingReasons: string[];
 }
 
 const TICK_MS_1X = 1200;
@@ -89,6 +99,34 @@ function statusLabel(status: TaskStatus): string {
   if (status === 'failed') return '失败';
   if (status === 'running') return '执行中';
   return '待执行';
+}
+
+function formatActionSummary(action?: TaskExecution['steps'][number]['actualAction']): string {
+  if (!action) {
+    return '未记录动作';
+  }
+
+  const base = action.type.toUpperCase();
+  if (action.type === 'click') {
+    return action.selector ? `${base} ${action.selector}` : base;
+  }
+  if (action.type === 'type') {
+    return action.selector ? `${base} ${action.selector}` : base;
+  }
+  if (action.type === 'select') {
+    const option = action.optionValue ?? action.text ?? '';
+    return option ? `${base} ${option}` : base;
+  }
+  if (action.type === 'wait') {
+    return `${base} ${action.waitMs ?? 0}ms`;
+  }
+  if (action.type === 'assert') {
+    return action.expected ? `${base} ${action.expected}` : base;
+  }
+  if (action.type === 'scroll') {
+    return action.direction ? `${base} ${action.direction}` : base;
+  }
+  return base;
 }
 
 function deriveCaseStatus(
@@ -135,26 +173,40 @@ function isCaseVisible(caseIndex: number, playback: PlaybackState): boolean {
   return caseIndex <= playback.currentCaseIndex;
 }
 
-function resolveTaskDetail(taskId: number, taskName: string) {
-  const detail = taskDetailTemplates[taskId];
-  if (detail) {
-    return detail;
+function sanitizeDetailList(list?: string[]): string[] {
+  return (list ?? []).map((item) => item.trim()).filter(Boolean);
+}
+
+function resolveTaskDetail(taskId: number, taskName: string, task?: Task): TaskDetailView {
+  const testScenario = task?.testScenario?.trim() ?? '';
+  const operationSteps = sanitizeDetailList(task?.operationSteps);
+  const successCriteria = sanitizeDetailList(task?.successCriteria);
+  const missingReasons: string[] = [];
+
+  if (!testScenario) {
+    missingReasons.push('缺少测试场景');
+  }
+  if (operationSteps.length < 3) {
+    missingReasons.push('操作步骤少于 3 条');
+  }
+  if (successCriteria.length < 2) {
+    missingReasons.push('成功标准少于 2 条');
   }
 
   return {
     taskId,
     title: taskName,
-    difficulty: '中等' as const,
-    estimatedDuration: '8-12分钟',
-    testScenario: '请按既定流程完成任务并记录异常。',
-    operationSteps: ['定位入口', '执行主要操作', '确认反馈', '完成并复核'],
-    successCriteria: ['任务目标完成', '反馈可理解', '结果可确认'],
-    tags: ['默认模板'],
+    testScenario,
+    operationSteps,
+    successCriteria,
+    isComplete: missingReasons.length === 0,
+    missingReasons,
   };
 }
 
 export function ExecutionStep({
   executions,
+  taskCatalog,
   selectedCaseId,
   qaHistory,
   onSelectCase,
@@ -175,6 +227,31 @@ export function ExecutionStep({
     [executions],
   );
 
+  const taskCatalogMap = useMemo(() => {
+    const map = new Map<number, Task>();
+    for (const task of taskCatalog ?? []) {
+      map.set(task.id, task);
+    }
+    return map;
+  }, [taskCatalog]);
+
+  const missingDetailTaskIds = useMemo(() => {
+    const missing = new Set<number>();
+    for (const execution of executionViews) {
+      const detail = resolveTaskDetail(
+        execution.taskId,
+        execution.taskName,
+        taskCatalogMap.get(execution.taskId),
+      );
+      if (!detail.isComplete) {
+        missing.add(execution.taskId);
+      }
+    }
+    return [...missing].sort((left, right) => left - right);
+  }, [executionViews, taskCatalogMap]);
+
+  const hasBlockingDetailError = missingDetailTaskIds.length > 0;
+
   const totalSteps = useMemo(
     () => executionViews.reduce((sum, item) => sum + item.steps.length, 0),
     [executionViews],
@@ -187,6 +264,16 @@ export function ExecutionStep({
     isFinished: executionViews.length === 0,
     speed: 1,
   });
+
+  useEffect(() => {
+    if (!hasBlockingDetailError) {
+      return;
+    }
+    setPlayback((prev) => ({
+      ...prev,
+      isPlaying: false,
+    }));
+  }, [hasBlockingDetailError]);
 
   useEffect(() => {
     if (executionViews[0]) {
@@ -369,15 +456,23 @@ export function ExecutionStep({
     ? deriveCaseStatus(selectedCase.executionIndex, playback, selectedCase.status)
     : 'pending';
   const selectedTaskDetail = selectedCase
-    ? resolveTaskDetail(selectedCase.taskId, selectedCase.taskName)
+    ? resolveTaskDetail(
+      selectedCase.taskId,
+      selectedCase.taskName,
+      taskCatalogMap.get(selectedCase.taskId),
+    )
     : null;
   const standardOperationSteps = selectedTaskDetail?.operationSteps ?? [];
+  const visibleExecutorSteps = visibleSelectedSteps.filter((step) => step.role === 'executor');
   const standardizedVisibleSteps = standardOperationSteps.map((operationStep, index) => ({
     order: index + 1,
     operationStep,
-    executionStep: visibleSelectedSteps[index],
+    executionStep: visibleExecutorSteps[index],
   }));
-  const extraExecutionSteps = visibleSelectedSteps.slice(standardOperationSteps.length);
+  const extraExecutionSteps = [
+    ...visibleSelectedSteps.filter((step) => step.role !== 'executor'),
+    ...visibleExecutorSteps.slice(standardOperationSteps.length),
+  ];
 
   const caseHistory = qaHistory
     .filter((item) => item.scope === 'case' && item.caseId === selectedCase?.resolvedCaseId)
@@ -469,7 +564,7 @@ export function ExecutionStep({
           variant="outline"
           className="border-slate-700 text-slate-300 hover:bg-slate-800"
           onClick={togglePlayback}
-          disabled={playback.isFinished || executionViews.length === 0}
+          disabled={hasBlockingDetailError || playback.isFinished || executionViews.length === 0}
         >
           {playback.isPlaying ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
           {playback.isPlaying ? '暂停' : '继续'}
@@ -480,7 +575,7 @@ export function ExecutionStep({
           variant="outline"
           className="border-slate-700 text-slate-300 hover:bg-slate-800"
           onClick={toggleSpeed}
-          disabled={executionViews.length === 0}
+          disabled={hasBlockingDetailError || executionViews.length === 0}
         >
           <Zap className="w-4 h-4 mr-2" />
           速度 {playback.speed}x
@@ -491,12 +586,20 @@ export function ExecutionStep({
           variant="outline"
           className="border-slate-700 text-slate-300 hover:bg-slate-800"
           onClick={skipToComplete}
-          disabled={playback.isFinished || executionViews.length === 0}
+          disabled={hasBlockingDetailError || playback.isFinished || executionViews.length === 0}
         >
           <FastForward className="w-4 h-4 mr-2" />
           跳过到完成
         </Button>
       </div>
+
+      {hasBlockingDetailError && (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+          执行已阻断：任务详情缺失，无法继续播放和生成报告。缺失任务 ID：
+          {' '}
+          {missingDetailTaskIds.map((taskId) => `#${String(taskId).padStart(2, '0')}`).join('、')}
+        </div>
+      )}
 
       {blockedHint && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
@@ -640,18 +743,31 @@ export function ExecutionStep({
 
                   <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3">
                     <div className="text-xs text-blue-300 mb-1">测试场景</div>
-                    <p className="text-xs text-blue-100">{selectedTaskDetail?.testScenario ?? '无测试场景描述'}</p>
+                    {selectedTaskDetail?.testScenario ? (
+                      <p className="text-xs text-blue-100">{selectedTaskDetail.testScenario}</p>
+                    ) : (
+                      <p className="text-xs text-amber-200">详情缺失：该任务未提供测试场景。</p>
+                    )}
                   </div>
 
                   <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                     <div className="text-xs text-slate-400 mb-2">成功标准</div>
                     <ul className="space-y-1">
-                      {(selectedTaskDetail?.successCriteria ?? []).map((criterion) => (
-                        <li key={`${selectedCase.resolvedCaseId}-criterion-${criterion}`} className="text-xs text-emerald-300">
-                          ✓ {criterion}
-                        </li>
-                      ))}
+                      {(selectedTaskDetail?.successCriteria ?? []).length > 0 ? (
+                        (selectedTaskDetail?.successCriteria ?? []).map((criterion) => (
+                          <li key={`${selectedCase.resolvedCaseId}-criterion-${criterion}`} className="text-xs text-emerald-300">
+                            ✓ {criterion}
+                          </li>
+                        ))
+                      ) : (
+                        <li className="text-xs text-amber-300">详情缺失：该任务未提供成功标准。</li>
+                      )}
                     </ul>
+                    {selectedTaskDetail && !selectedTaskDetail.isComplete && (
+                      <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-300">
+                        缺失项：{selectedTaskDetail.missingReasons.join('；')}
+                      </div>
+                    )}
                   </div>
 
                   <ScrollArea className="h-[260px] pr-3">
@@ -668,6 +784,41 @@ export function ExecutionStep({
                           {item.executionStep ? (
                             <div className="mt-1 space-y-1">
                               <p className="text-sm text-slate-300">{item.executionStep.content}</p>
+                              {item.executionStep.plannedStep && (
+                                <p className="text-xs text-slate-400">
+                                  计划步骤：{item.executionStep.plannedStep}
+                                </p>
+                              )}
+                              <p className="text-xs text-slate-400">
+                                实际动作：{formatActionSummary(item.executionStep.actualAction)}
+                              </p>
+                              {item.executionStep.observation && (
+                                <p className="text-xs text-slate-500">
+                                  页面反馈：{item.executionStep.observation}
+                                </p>
+                              )}
+                              {item.executionStep.result && (
+                                <Badge
+                                  className={
+                                    item.executionStep.result === 'success'
+                                      ? 'bg-emerald-500/20 text-emerald-300 border-0'
+                                      : item.executionStep.result === 'failed'
+                                        ? 'bg-red-500/20 text-red-300 border-0'
+                                        : 'bg-slate-700 text-slate-300 border-0'
+                                  }
+                                >
+                                  结果：{item.executionStep.result === 'success' ? '成功' : item.executionStep.result === 'failed' ? '失败' : '跳过'}
+                                </Badge>
+                              )}
+                              {item.executionStep.evidence && (
+                                <div className="rounded border border-slate-800 bg-slate-950/60 p-2 text-xs text-slate-400 space-y-1">
+                                  <div>证据 URL：{item.executionStep.evidence.urlBefore} → {item.executionStep.evidence.urlAfter}</div>
+                                  <div>DOM 摘录：{item.executionStep.evidence.domExcerpt.slice(0, 120)}</div>
+                                  {item.executionStep.evidence.screenshotPath && (
+                                    <div>截图：{item.executionStep.evidence.screenshotPath}</div>
+                                  )}
+                                </div>
+                              )}
                               {item.executionStep.emotion && (
                                 <Badge className="bg-slate-800 text-slate-300 border-0">
                                   情绪: {item.executionStep.emotion} ({item.executionStep.emotionValue ?? 0})
@@ -687,12 +838,22 @@ export function ExecutionStep({
                         >
                           <div className="text-xs text-slate-500">补充执行记录</div>
                           <p className="text-sm text-slate-300 mt-1">{step.content}</p>
+                          {step.actualAction && (
+                            <p className="text-xs text-slate-500 mt-1">
+                              动作：{formatActionSummary(step.actualAction)}
+                            </p>
+                          )}
+                          {step.observation && (
+                            <p className="text-xs text-slate-500 mt-1">反馈：{step.observation}</p>
+                          )}
                         </div>
                       ))}
 
                       {standardizedVisibleSteps.length === 0 && (
                         <div className="p-2 rounded border border-slate-800 bg-slate-950/40 text-xs text-slate-500">
-                          该案例尚未执行到可展示步骤。
+                          {selectedTaskDetail?.operationSteps.length
+                            ? '该案例尚未执行到可展示步骤。'
+                            : '详情缺失：该任务未提供标准操作步骤。'}
                         </div>
                       )}
                     </div>
@@ -718,7 +879,7 @@ export function ExecutionStep({
                         type="button"
                         className="bg-emerald-600 hover:bg-emerald-700 text-white"
                         onClick={submitCaseQuestion}
-                        disabled={!selectedCaseVisible || visibleSelectedSteps.length === 0}
+                        disabled={hasBlockingDetailError || !selectedCaseVisible || visibleSelectedSteps.length === 0}
                       >
                         <MessageSquare className="w-4 h-4 mr-2" />
                         提交追问
@@ -768,7 +929,7 @@ export function ExecutionStep({
             }
           }}
           className="bg-emerald-600 hover:bg-emerald-700 text-white"
-          disabled={!playback.isFinished || executions.length === 0 || isCompleting}
+          disabled={hasBlockingDetailError || !playback.isFinished || executions.length === 0 || isCompleting}
         >
           {isCompleting ? '生成报告中...' : '查看完整报告'}
           <ArrowRight className="w-4 h-4 ml-2" />

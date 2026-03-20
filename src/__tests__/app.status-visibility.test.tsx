@@ -1,9 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import App from '@/App';
 import { defaultTasks } from '@/data/mock/tasks';
 import { mockProvider } from '@/services/mockProvider';
 import type { DiagnosisResult } from '@/services/uxAgentProvider';
+
+function buildDetailedTasks() {
+  return defaultTasks.slice(0, 15).map((task, index) => ({
+    ...task,
+    id: index + 1,
+    selected: false,
+    testScenario: `完成「${task.name}」并确认结果。`,
+    operationSteps: ['进入入口', '执行操作', '确认反馈'],
+    successCriteria: ['操作可完成', '反馈可验证'],
+  }));
+}
 
 beforeEach(() => {
   vi.useRealTimers();
@@ -17,6 +28,7 @@ afterEach(() => {
 
 describe('App runtime status visibility', () => {
   it('updates header status during analysis and returns to idle', async () => {
+    vi.useFakeTimers();
     const delayedDiagnosis: DiagnosisResult = {
       items: [
         {
@@ -47,23 +59,40 @@ describe('App runtime status visibility', () => {
     fireEvent.change(screen.getByPlaceholderText('https://www.example.com'), {
       target: { value: 'https://example.com' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
-
-    await waitFor(() => {
-      expect(screen.getAllByText('分析中').length).toBeGreaterThan(0);
-    }, {
-      timeout: 4000,
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
+      await vi.advanceTimersByTimeAsync(1600);
     });
 
-    expect(await screen.findByText('A. 初步技术诊断报告')).toBeTruthy();
-    await waitFor(() => {
-      expect(screen.getAllByText('空闲').length).toBeGreaterThan(0);
-    }, {
-      timeout: 6000,
+    expect(screen.getAllByText('分析中').length).toBeGreaterThan(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
     });
+
+    expect(screen.getByText('A. 初步技术诊断报告')).toBeTruthy();
+    expect(screen.getAllByText('空闲').length).toBeGreaterThan(0);
   }, 12000);
 
   it('shows error status when global qa request fails', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(mockProvider, 'getDiagnosis').mockResolvedValueOnce({
+      items: [
+        {
+          dimension: '结构化导航',
+          status: 'success',
+          description: '任务详情已生成。',
+        },
+      ],
+      tasks: buildDetailedTasks(),
+      taskGeneration: {
+        status: 'success',
+        code: 'TEST_TASKS_READY',
+        message: '任务生成成功。',
+        blocked: false,
+      },
+      source: 'llm-4stage',
+    });
     vi.spyOn(mockProvider, 'askQuestion').mockRejectedValue(new Error('问答服务暂不可用'));
 
     render(<App />);
@@ -71,21 +100,31 @@ describe('App runtime status visibility', () => {
     fireEvent.change(screen.getByPlaceholderText('https://www.example.com'), {
       target: { value: 'https://example.com' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
+      await vi.advanceTimersByTimeAsync(2200);
+    });
 
-    expect(await screen.findByRole('button', { name: '下一步：选择任务与测试人员' }, { timeout: 12000 })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '下一步：选择任务与测试人员' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '下一步：选择任务与测试人员' }));
     fireEvent.click(screen.getByText('新用户注册'));
     fireEvent.click(screen.getByText('登录账号'));
     fireEvent.click(screen.getByText('全局搜索'));
     fireEvent.click(screen.getByRole('button', { name: '增加极速党人数' }));
-    fireEvent.click(screen.getByRole('button', { name: '开始测试执行' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '开始测试执行' }));
+      await vi.advanceTimersByTimeAsync(2000);
+    });
 
-    expect(await screen.findByText('自动执行中', {}, { timeout: 12000 })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '跳过到完成' }));
-    fireEvent.click(screen.getByRole('button', { name: '查看完整报告' }));
-    expect(await screen.findByText('可用性测试最终报告', {}, { timeout: 12000 })).toBeTruthy();
+    expect(screen.getByText('自动执行中')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '跳过到完成' }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '查看完整报告' }));
+    });
+    expect(screen.getByText('可用性测试最终报告')).toBeTruthy();
 
     fireEvent.change(
       screen.getByPlaceholderText('例如：为什么银发族在结账任务上失败率更高？'),
@@ -93,11 +132,10 @@ describe('App runtime status visibility', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: '提交全局提问' }));
 
-    await waitFor(() => {
-      expect(screen.getAllByText('异常').length).toBeGreaterThan(0);
-    }, {
-      timeout: 6000,
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
     });
+    expect(screen.getAllByText('异常').length).toBeGreaterThan(0);
     expect(screen.getByText(/问答服务暂不可用|全局追问失败/)).toBeTruthy();
   }, 20000);
 

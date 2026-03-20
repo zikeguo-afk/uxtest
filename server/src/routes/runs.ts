@@ -4,7 +4,7 @@ import { defaultTasks } from '../data/tasks';
 import { buildRunSnapshot, MAX_EXECUTION_CASES } from '../domain/execution-builder';
 import { RunStore } from '../store/run-store';
 import { ApiError } from '../types/api-error';
-import type { ExecutionRequest } from '../types/domain';
+import type { ExecutionRequest, TaskDetailValidationIssue } from '../types/domain';
 import { parseOrThrow } from './_utils';
 
 interface RunsRouteOptions {
@@ -46,6 +46,10 @@ const runIdSchema = z.object({
   runId: z.string().min(1),
 });
 
+function sanitizeDetailList(list?: string[]): string[] {
+  return (list ?? []).map((item) => item.trim()).filter(Boolean);
+}
+
 export const runsRoutes: FastifyPluginAsync<RunsRouteOptions> = async (app, options) => {
   app.post('/runs', async (request) => {
     const input = parseOrThrow(createRunSchema, request.body);
@@ -65,6 +69,48 @@ export const runsRoutes: FastifyPluginAsync<RunsRouteOptions> = async (app, opti
     const invalidTaskIds = uniqueTaskIds.filter((taskId) => !catalogIds.has(taskId));
     if (invalidTaskIds.length > 0) {
       throw new ApiError('VALIDATION_ERROR', '存在无效任务 ID', 400, { invalidTaskIds });
+    }
+
+    if (input.taskCatalog && input.taskCatalog.length > 0) {
+      const catalogById = new Map(input.taskCatalog.map((task) => [task.id, task]));
+      const incompleteTasks = uniqueTaskIds
+        .map((taskId) => {
+          const task = catalogById.get(taskId);
+          if (!task) {
+            return null;
+          }
+
+          const reasons: string[] = [];
+          if (!task.testScenario || task.testScenario.trim().length === 0) {
+            reasons.push('缺少 testScenario');
+          }
+
+          const operationSteps = sanitizeDetailList(task.operationSteps);
+          const successCriteria = sanitizeDetailList(task.successCriteria);
+          if (operationSteps.length < 3) {
+            reasons.push('operationSteps 少于 3 条');
+          }
+          if (successCriteria.length < 2) {
+            reasons.push('successCriteria 少于 2 条');
+          }
+
+          if (reasons.length === 0) {
+            return null;
+          }
+
+          return {
+            taskId: task.id,
+            taskName: task.name,
+            reasons,
+          };
+        })
+        .filter((task): task is TaskDetailValidationIssue => task !== null);
+
+      if (incompleteTasks.length > 0) {
+        throw new ApiError('VALIDATION_ERROR', '已选任务详情不完整，无法开始执行', 400, {
+          incompleteTasks,
+        });
+      }
     }
 
     const totalSelectedPeople = input.categorySelections.reduce(

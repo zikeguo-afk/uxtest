@@ -29,6 +29,22 @@ const taskProposalSchema = z.object({
   evidenceReason: z.string().min(1),
 });
 
+const stringListLenientSchema = z.union([z.array(z.string().min(1)), z.string().min(1)]);
+
+const taskProposalLenientSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  difficulty: z.enum(['简单', '中等', '困难']).optional(),
+  estimatedDuration: z.string().min(1).optional(),
+  testScenario: z.string().min(1).optional(),
+  operationSteps: stringListLenientSchema.optional(),
+  successCriteria: stringListLenientSchema.optional(),
+  tags: stringListLenientSchema.optional(),
+  evidenceRefs: stringListLenientSchema.optional(),
+  evidenceReason: z.string().min(1).optional(),
+});
+
 export const llmCrawlStageSchema = z.object({
   finalUrl: z.string().min(1),
   statusCode: z.number().int().min(100).max(599),
@@ -75,7 +91,14 @@ export const llmTaskStageSchema = z.object({
   taskProposals: z.array(taskProposalSchema).min(1),
 });
 
+export const llmTaskStageLenientSchema = z.object({
+  summary: z.string().min(1).optional(),
+  prioritizedTaskIds: z.array(z.number().int().positive()).optional(),
+  taskProposals: z.array(taskProposalLenientSchema).min(1),
+});
+
 export type LLMCrawlStageSchema = z.infer<typeof llmCrawlStageSchema>;
 export type LLMStructureStageSchema = z.infer<typeof llmStructureStageSchema>;
 export type LLMRiskStageSchema = z.infer<typeof llmRiskStageSchema>;
 export type LLMTaskStageSchema = z.infer<typeof llmTaskStageSchema>;
+export type LLMTaskStageLenientSchema = z.infer<typeof llmTaskStageLenientSchema>;

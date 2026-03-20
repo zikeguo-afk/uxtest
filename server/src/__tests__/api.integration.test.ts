@@ -22,10 +22,21 @@ beforeAll(async () => {
       runTtlMs: 2 * 60 * 60 * 1000,
       runCacheSize: 200,
       runCleanupIntervalMs: 10 * 60 * 1000,
+      executionJobTtlMs: 2 * 60 * 60 * 1000,
+      executionJobCacheSize: 200,
+      executionJobCleanupIntervalMs: 10 * 60 * 1000,
       corsOrigin: '*',
       evaluationMode: 'mock',
       evaluatorTimeoutMs: 30_000,
       evaluatorAllowInsecureTls: true,
+      liveRunnerEnabled: false,
+      playwrightHeadless: true,
+      playwrightConcurrency: 2,
+      caseMaxSteps: 12,
+      caseTimeoutMs: 90_000,
+      stepTimeoutMs: 10_000,
+      liveRunnerScreenshotEnabled: false,
+      liveRunnerArtifactDir: 'server/.artifacts/live-runs-test',
       llmProvider: 'mock',
       llmApiBaseUrl: 'https://api.openai.com/v1',
       llmApiKey: '',
@@ -119,6 +130,46 @@ describe('API integration', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('rejects run request when selected task details are incomplete', async () => {
+    const res = await request(app.server)
+      .post('/api/v1/runs')
+      .send({
+        selectedTaskIds: [1, 2, 3],
+        taskCatalog: [
+          {
+            id: 1,
+            name: '完成首次加载',
+            description: '进入页面',
+            operationSteps: ['进入入口'],
+            successCriteria: ['页面可进入'],
+          },
+          {
+            id: 2,
+            name: '完成关键操作',
+            description: '提交内容',
+            testScenario: '进入页面并提交',
+            operationSteps: ['打开页面', '点击提交', '确认结果'],
+            successCriteria: ['提交成功', '反馈可见'],
+          },
+          {
+            id: 3,
+            name: '查看结果',
+            description: '查看状态',
+            testScenario: '查看列表状态',
+            operationSteps: ['进入列表', '选择记录', '查看详情'],
+            successCriteria: ['状态可查看', '结果可确认'],
+          },
+        ],
+        categorySelections: [{ categoryId: 'cat-speed', count: 1 }],
+        maxCases: 40,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(Array.isArray(res.body.error.details?.incompleteTasks)).toBe(true);
+    expect(res.body.error.details.incompleteTasks.length).toBeGreaterThan(0);
+  });
+
   it('creates run and serves report/question endpoints', async () => {
     const createRes = await request(app.server)
       .post('/api/v1/runs')
@@ -137,6 +188,17 @@ describe('API integration', () => {
     expect(createRes.body.executions.length).toBeLessThanOrEqual(40);
 
     const runId = createRes.body.runId as string;
+    const startJobRes = await request(app.server).post(`/api/v1/runs/${runId}/execution-jobs`).send({});
+    expect(startJobRes.status).toBe(200);
+    expect(typeof startJobRes.body.jobId).toBe('string');
+
+    const statusJobRes = await request(app.server)
+      .get(`/api/v1/runs/${runId}/execution-jobs/${startJobRes.body.jobId}`);
+    expect(statusJobRes.status).toBe(200);
+    expect(
+      ['queued', 'running', 'completed', 'failed'].includes(statusJobRes.body.status),
+    ).toBe(true);
+    expect(statusJobRes.body.progress?.runId).toBe(runId);
 
     const reportRes = await request(app.server).post(`/api/v1/runs/${runId}/report`).send({});
     expect(reportRes.status).toBe(200);

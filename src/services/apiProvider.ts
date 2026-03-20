@@ -6,6 +6,7 @@ import type {
 } from '@/services/uxAgentProvider';
 import type {
   AnalysisProgressStatus,
+  ExecutionJobProgress,
   ExecutionRequest,
   QARequest,
   QAResponse,
@@ -52,13 +53,44 @@ interface CreateRunResponse {
   executions: TaskExecution[];
 }
 
+interface StartExecutionJobResponse {
+  jobId: string;
+  status: ExecutionJobProgress['status'];
+  progress: ExecutionJobProgress;
+  createdAt: string;
+}
+
+interface ExecutionJobStatusResponse {
+  jobId: string;
+  status: ExecutionJobProgress['status'];
+  progress: ExecutionJobProgress;
+  snapshot: TestRunSnapshot | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787').replace(/\/+$/, '');
 const JSON_HEADERS = { 'content-type': 'application/json' };
 const DIAGNOSIS_POLL_INTERVAL_MS = 500;
+const EXECUTION_POLL_INTERVAL_MS = (() => {
+  const raw = Number(import.meta.env.VITE_EXECUTION_POLL_INTERVAL_MS ?? 800);
+  if (!Number.isFinite(raw) || raw < 300) {
+    return 800;
+  }
+  return Math.floor(raw);
+})();
 const DIAGNOSIS_TIMEOUT_MS = (() => {
   const raw = Number(import.meta.env.VITE_DIAGNOSIS_TIMEOUT_MS ?? 10 * 60 * 1000);
   if (!Number.isFinite(raw) || raw < 30_000) {
     return 10 * 60 * 1000;
+  }
+  return Math.floor(raw);
+})();
+const EXECUTION_TIMEOUT_MS = (() => {
+  const raw = Number(import.meta.env.VITE_EXECUTION_TIMEOUT_MS ?? 30 * 60 * 1000);
+  if (!Number.isFinite(raw) || raw < 60_000) {
+    return 30 * 60 * 1000;
   }
   return Math.floor(raw);
 })();
@@ -182,7 +214,54 @@ export const apiProvider: UXAgentProvider = {
 
   async getExecutions(request: ExecutionRequest): Promise<TaskExecution[]> {
     const snapshot = await this.createRunSnapshot(request);
-    return snapshot.executions;
+    const runId = snapshot.runId;
+    const { jobId } = await this.startExecutionJob(runId);
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt <= EXECUTION_TIMEOUT_MS) {
+      await sleep(EXECUTION_POLL_INTERVAL_MS);
+      const status = await this.getExecutionJobStatus(runId, jobId);
+      if (status.status === 'completed') {
+        const completedSnapshot = status.snapshot ?? snapshot;
+        latestSnapshot = completedSnapshot;
+        latestRunId = completedSnapshot.runId;
+        return completedSnapshot.executions;
+      }
+      if (status.status === 'failed') {
+        throw new Error(status.error || '执行任务失败，请重试。');
+      }
+    }
+
+    throw new Error('执行任务超时，请稍后重试。');
+  },
+
+  async startExecutionJob(runId: string): Promise<{ jobId: string }> {
+    const response = await requestJson<StartExecutionJobResponse>(`/api/v1/runs/${runId}/execution-jobs`, {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: '{}',
+    });
+    return { jobId: response.jobId };
+  },
+
+  async getExecutionJobStatus(
+    runId: string,
+    jobId: string,
+  ): Promise<{
+    status: ExecutionJobProgress['status'];
+    progress: ExecutionJobProgress;
+    snapshot: TestRunSnapshot | null;
+    error: string | null;
+  }> {
+    const response = await requestJson<ExecutionJobStatusResponse>(
+      `/api/v1/runs/${runId}/execution-jobs/${jobId}`,
+    );
+    return {
+      status: response.status,
+      progress: response.progress,
+      snapshot: response.snapshot,
+      error: response.error,
+    };
   },
 
   async getReport(executions: TaskExecution[]): Promise<UXAgentReport> {

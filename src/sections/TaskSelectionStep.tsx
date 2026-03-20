@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { taskDetailTemplates } from '@/data/mock/taskDetailTemplates';
 import { ArrowRight, ArrowLeft, Users, Target, AlertCircle, Minus, Plus, Info } from 'lucide-react';
 import type { AgentCategorySelection, AgentCategoryTemplate, Task } from '@/types';
 
@@ -25,37 +24,50 @@ function buildSelectionMap(selections: AgentCategorySelection[]): Map<string, nu
   return new Map(selections.map((selection) => [selection.categoryId, selection.count]));
 }
 
-function resolveTaskDetail(task: Task) {
-  if (task.testScenario || (task.operationSteps && task.operationSteps.length > 0) || (task.successCriteria && task.successCriteria.length > 0)) {
-    return {
-      taskId: task.id,
-      title: task.name,
-      difficulty: task.difficulty ?? '中等' as const,
-      estimatedDuration: task.estimatedDuration ?? '8-12分钟',
-      testScenario: task.testScenario ?? task.description,
-      operationSteps: task.operationSteps && task.operationSteps.length > 0
-        ? task.operationSteps
-        : ['定位功能入口', '执行关键操作', '验证系统反馈'],
-      successCriteria: task.successCriteria && task.successCriteria.length > 0
-        ? task.successCriteria
-        : ['流程可闭环完成', '反馈明确且可理解'],
-      tags: task.tags ?? ['API生成'],
-    };
+interface ResolvedTaskDetail {
+  taskId: number;
+  title: string;
+  difficulty: '简单' | '中等' | '困难';
+  estimatedDuration: string;
+  testScenario: string;
+  operationSteps: string[];
+  successCriteria: string[];
+  tags: string[];
+  isComplete: boolean;
+  missingReasons: string[];
+}
+
+function sanitizeDetailList(list?: string[]): string[] {
+  return (list ?? []).map((item) => item.trim()).filter(Boolean);
+}
+
+function resolveTaskDetail(task: Task): ResolvedTaskDetail {
+  const testScenario = task.testScenario?.trim() ?? '';
+  const operationSteps = sanitizeDetailList(task.operationSteps);
+  const successCriteria = sanitizeDetailList(task.successCriteria);
+
+  const missingReasons: string[] = [];
+  if (!testScenario) {
+    missingReasons.push('缺少测试场景');
+  }
+  if (operationSteps.length < 3) {
+    missingReasons.push('操作步骤少于 3 条');
+  }
+  if (successCriteria.length < 2) {
+    missingReasons.push('成功标准少于 2 条');
   }
 
-  const detail = taskDetailTemplates[task.id];
-  if (detail) {
-    return detail;
-  }
   return {
     taskId: task.id,
     title: task.name,
-    difficulty: '中等' as const,
-    estimatedDuration: '8-12分钟',
-    testScenario: task.description,
-    operationSteps: ['定位入口', '执行操作', '确认反馈', '完成并复核'],
-    successCriteria: ['任务目标完成', '反馈可理解', '结果可确认'],
-    tags: ['默认模板'],
+    difficulty: task.difficulty ?? '中等',
+    estimatedDuration: task.estimatedDuration ?? '8-12分钟',
+    testScenario,
+    operationSteps,
+    successCriteria,
+    tags: task.tags ?? ['LLM生成'],
+    isComplete: missingReasons.length === 0,
+    missingReasons,
   };
 }
 
@@ -77,9 +89,20 @@ export function TaskSelectionStep({
   const [detailTaskId, setDetailTaskId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const detailMap = useMemo(() => new Map(tasks.map((task) => [task.id, resolveTaskDetail(task)])), [tasks]);
+  const selectedTaskDetailIssues = useMemo(() => {
+    return selectedTasks
+      .map((taskId) => detailMap.get(taskId))
+      .filter((detail): detail is ResolvedTaskDetail => Boolean(detail && !detail.isComplete));
+  }, [detailMap, selectedTasks]);
+
+  const canProceed = !isSubmitting
+    && selectedTasks.length >= minSelectedTasks
+    && selectedTasks.length <= maxSelectedTasks
+    && totalSelectedPeople > 0
+    && selectedTaskDetailIssues.length === 0;
 
   return (
-    <div className="space-y-6 min-h-0">
+    <div className="flex h-full min-h-0 flex-col gap-6">
       <div className="flex items-center gap-3 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg animate-fade-in">
         <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0" />
         <div className="text-sm text-amber-200">
@@ -87,8 +110,8 @@ export function TaskSelectionStep({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch min-h-0 overflow-hidden lg:min-h-[680px] lg:h-[72vh]">
-        <div className="animate-slide-in-left flex h-[56vh] md:h-[62vh] lg:h-full" style={{ animationDelay: '100ms' }}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch flex-1 min-h-0 overflow-hidden">
+        <div className="animate-slide-in-left flex h-[56vh] md:h-[62vh] lg:h-full min-h-0" style={{ animationDelay: '100ms' }}>
           <Card data-testid="task-selection-left-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full overflow-hidden">
             <CardHeader className="shrink-0">
               <div className="flex items-center justify-between">
@@ -163,28 +186,45 @@ export function TaskSelectionStep({
                         >
                           <div>
                             <div className="text-xs text-blue-300 mb-1">测试场景</div>
-                            <p className="text-xs text-slate-300">{detailMap.get(task.id)?.testScenario}</p>
+                            {detailMap.get(task.id)?.testScenario ? (
+                              <p className="text-xs text-slate-300">{detailMap.get(task.id)?.testScenario}</p>
+                            ) : (
+                              <p className="text-xs text-amber-300">详情缺失：未提供测试场景。</p>
+                            )}
                           </div>
                           <div>
                             <div className="text-xs text-slate-400 mb-1">操作步骤</div>
                             <ol className="space-y-1 break-words">
-                              {(detailMap.get(task.id)?.operationSteps ?? []).map((step, stepIndex) => (
-                                <li key={`${task.id}-op-${stepIndex}`} className="text-xs text-slate-300">
-                                  {stepIndex + 1}. {step}
-                                </li>
-                              ))}
+                              {(detailMap.get(task.id)?.operationSteps ?? []).length > 0 ? (
+                                (detailMap.get(task.id)?.operationSteps ?? []).map((step, stepIndex) => (
+                                  <li key={`${task.id}-op-${stepIndex}`} className="text-xs text-slate-300">
+                                    {stepIndex + 1}. {step}
+                                  </li>
+                                ))
+                              ) : (
+                                <li className="text-xs text-amber-300">详情缺失：未提供操作步骤。</li>
+                              )}
                             </ol>
                           </div>
                           <div>
                             <div className="text-xs text-slate-400 mb-1">成功标准</div>
                             <ul className="space-y-1 break-words">
-                              {(detailMap.get(task.id)?.successCriteria ?? []).map((criterion) => (
-                                <li key={`${task.id}-criterion-${criterion}`} className="text-xs text-emerald-300">
-                                  ✓ {criterion}
-                                </li>
-                              ))}
+                              {(detailMap.get(task.id)?.successCriteria ?? []).length > 0 ? (
+                                (detailMap.get(task.id)?.successCriteria ?? []).map((criterion) => (
+                                  <li key={`${task.id}-criterion-${criterion}`} className="text-xs text-emerald-300">
+                                    ✓ {criterion}
+                                  </li>
+                                ))
+                              ) : (
+                                <li className="text-xs text-amber-300">详情缺失：未提供成功标准。</li>
+                              )}
                             </ul>
                           </div>
+                          {!detailMap.get(task.id)?.isComplete && (
+                            <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">
+                              该任务详情不完整：{detailMap.get(task.id)?.missingReasons.join('；')}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -195,7 +235,7 @@ export function TaskSelectionStep({
           </Card>
         </div>
 
-        <div className="animate-slide-in-right flex h-[56vh] md:h-[62vh] lg:h-full" style={{ animationDelay: '200ms' }}>
+        <div className="animate-slide-in-right flex h-[56vh] md:h-[62vh] lg:h-full min-h-0" style={{ animationDelay: '200ms' }}>
           <Card data-testid="task-selection-right-panel" className="bg-slate-900/50 border-slate-800 h-full flex flex-col min-h-0 w-full overflow-hidden">
             <CardHeader className="shrink-0">
               <div className="flex items-center justify-between">
@@ -307,6 +347,19 @@ export function TaskSelectionStep({
         </div>
       </div>
 
+      {selectedTaskDetailIssues.length > 0 && (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
+          已选任务存在详情缺失，暂不能开始执行。请返回分析阶段重新生成任务详情。
+          <div className="mt-2 text-xs text-red-300 space-y-1">
+            {selectedTaskDetailIssues.map((detail) => (
+              <p key={`missing-${detail.taskId}`}>
+                #{String(detail.taskId).padStart(2, '0')} {detail.title}：{detail.missingReasons.join('，')}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between animate-fade-in" style={{ animationDelay: '500ms' }}>
         <Button
           variant="outline"
@@ -328,12 +381,7 @@ export function TaskSelectionStep({
               setIsSubmitting(false);
             }
           }}
-          disabled={
-            isSubmitting ||
-            selectedTasks.length < minSelectedTasks ||
-            selectedTasks.length > maxSelectedTasks ||
-            totalSelectedPeople === 0
-          }
+          disabled={!canProceed}
           className="bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
         >
           {isSubmitting ? '生成测试样本中...' : '开始测试执行'}

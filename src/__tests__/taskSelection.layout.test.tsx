@@ -29,11 +29,17 @@ describe('TaskSelection layout', () => {
 
     expect(leftPanel.className).toContain('h-full');
     expect(leftPanel.className).toContain('flex');
+    expect(leftPanel.className).toContain('overflow-hidden');
     expect(rightPanel.className).toContain('h-full');
     expect(rightPanel.className).toContain('flex');
+    expect(rightPanel.className).toContain('overflow-hidden');
 
     expect(leftPanel.querySelector('.overflow-y-auto')).not.toBeNull();
     expect(rightPanel.querySelector('.overflow-y-auto')).not.toBeNull();
+
+    const grid = leftPanel.closest('.grid');
+    expect(grid?.className).toContain('overflow-hidden');
+    expect(grid?.className).toContain('min-h-0');
 
     fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
     const detailPanel = screen.getByTestId('task-selection-task-detail');

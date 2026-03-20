@@ -4,6 +4,25 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import App from '@/App';
 import { defaultTasks } from '@/data/mock/tasks';
 import { mockProvider } from '@/services/mockProvider';
+import type { DiagnosisResult } from '@/services/uxAgentProvider';
+
+function buildDetailedTasks() {
+  return defaultTasks.slice(0, 15).map((task, index) => ({
+    ...task,
+    id: index + 1,
+    selected: false,
+    testScenario: `在目标页面中完成「${task.name}」并确认结果可见。`,
+    operationSteps: [
+      '进入该功能入口',
+      '执行关键操作并提交',
+      '确认页面反馈与结果状态',
+    ],
+    successCriteria: [
+      '目标操作可完成',
+      '结果反馈清晰且可确认',
+    ],
+  }));
+}
 
 beforeEach(() => {
   vi.useRealTimers();
@@ -17,6 +36,25 @@ afterEach(() => {
 
 describe('App smoke flow', () => {
   it('completes the core workflow from init to report with enhanced report sections', async () => {
+    const diagnosis: DiagnosisResult = {
+      items: [
+        {
+          dimension: '结构化导航',
+          status: 'success',
+          description: '任务详情已生成。',
+        },
+      ],
+      tasks: buildDetailedTasks(),
+      taskGeneration: {
+        status: 'success',
+        code: 'TEST_TASKS_READY',
+        message: '任务生成成功。',
+        blocked: false,
+      },
+      source: 'llm-4stage',
+    };
+    vi.spyOn(mockProvider, 'getDiagnosis').mockResolvedValueOnce(diagnosis);
+
     render(<App />);
 
     fireEvent.change(screen.getByPlaceholderText('https://www.example.com'), {
@@ -66,7 +104,7 @@ describe('App smoke flow', () => {
     expect(screen.getByText('结果可信度')).toBeTruthy();
     expect(screen.getAllByText('类别汇总').length).toBeGreaterThan(0);
     expect(screen.getAllByText('全局追问（当前 Run）').length).toBeGreaterThan(0);
-  }, 15000);
+  }, 45000);
 
   it('stays in analysis when diagnosis returns blocked task generation', async () => {
     vi.spyOn(mockProvider, 'getDiagnosis').mockResolvedValueOnce({
@@ -154,5 +192,52 @@ describe('App smoke flow', () => {
       fireEvent.click(nextButton);
     });
     expect(await screen.findByText('选择测试任务')).toBeTruthy();
+  }, 12000);
+
+  it('blocks entering execution when selected tasks are missing details', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(mockProvider, 'getDiagnosis').mockResolvedValueOnce({
+      items: [
+        {
+          dimension: '结构化导航',
+          status: 'warning',
+          description: '任务详情缺失，用于阻断校验。',
+        },
+      ],
+      tasks: defaultTasks.slice(0, 10).map((task, index) => ({
+        ...task,
+        id: index + 1,
+        selected: false,
+      })),
+      taskGeneration: {
+        status: 'success',
+        code: 'TEST_TASKS_INCOMPLETE',
+        message: '任务生成成功但详情不完整。',
+        blocked: false,
+      },
+      source: 'llm-4stage',
+    });
+
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('https://www.example.com'), {
+      target: { value: 'https://example.com' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '开始分析' }));
+      await vi.advanceTimersByTimeAsync(2200);
+    });
+    expect(screen.getByText('A. 初步技术诊断报告')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '下一步：选择任务与测试人员' }));
+    });
+
+    fireEvent.click(screen.getByText('新用户注册'));
+    fireEvent.click(screen.getByText('登录账号'));
+    fireEvent.click(screen.getByText('全局搜索'));
+    fireEvent.click(screen.getByRole('button', { name: '增加极速党人数' }));
+
+    expect(screen.getByText(/已选任务存在详情缺失/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: '开始测试执行' }) as HTMLButtonElement).disabled).toBe(true);
   }, 12000);
 });

@@ -12,6 +12,12 @@ import type {
   LLMAnalysisOutput,
   LLMEnhanceInput,
   LLMEnhanceOutput,
+  LLMPersonaGenerationInput,
+  LLMPersonaGenerationOutput,
+  LLMExecutionPlanInput,
+  LLMExecutionPlanOutput,
+  LLMStepDecisionInput,
+  LLMStepDecisionOutput,
 } from '../types/domain';
 
 export interface LLMHealthReport {
@@ -33,6 +39,9 @@ export interface StageSummaryInput {
 export interface LLMAdapter {
   kind: string;
   enhanceInference(input: LLMEnhanceInput): Promise<LLMEnhanceOutput> | LLMEnhanceOutput;
+  generatePersonas?(input: LLMPersonaGenerationInput): Promise<LLMPersonaGenerationOutput> | LLMPersonaGenerationOutput;
+  planExecutionCase?(input: LLMExecutionPlanInput): Promise<LLMExecutionPlanOutput> | LLMExecutionPlanOutput;
+  decideExecutionStep?(input: LLMStepDecisionInput): Promise<LLMStepDecisionOutput> | LLMStepDecisionOutput;
   runCrawlStage(input: LLMCrawlStageInput): Promise<LLMStageResult<LLMCrawlStageOutput>> | LLMStageResult<LLMCrawlStageOutput>;
   runStructureStage(input: LLMStructureStageInput): Promise<LLMStageResult<LLMStructureStageOutput>> | LLMStageResult<LLMStructureStageOutput>;
   runRiskStage(input: LLMRiskStageInput): Promise<LLMStageResult<LLMRiskStageOutput>> | LLMStageResult<LLMRiskStageOutput>;

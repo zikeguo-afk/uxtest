@@ -2,7 +2,7 @@ import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { ExecutionStep } from '@/sections/ExecutionStep';
-import type { QAHistoryItem, TaskExecution } from '@/types';
+import type { QAHistoryItem, Task, TaskExecution } from '@/types';
 
 const executionCases: TaskExecution[] = [
   {
@@ -44,6 +44,26 @@ const executionCases: TaskExecution[] = [
 ];
 
 const emptyHistory: QAHistoryItem[] = [];
+const taskCatalog: Task[] = [
+  {
+    id: 3,
+    name: '全局搜索',
+    description: '搜索关键内容',
+    selected: false,
+    testScenario: '在页面执行搜索并核对结果。',
+    operationSteps: ['定位搜索入口', '输入关键词并提交', '检查结果反馈'],
+    successCriteria: ['搜索可完成', '结果可确认'],
+  },
+  {
+    id: 6,
+    name: '加入购物车',
+    description: '把商品加入购物车',
+    selected: false,
+    testScenario: '从详情页加入购物车并确认数量。',
+    operationSteps: ['进入详情页', '点击加入购物车', '确认数量变化'],
+    successCriteria: ['加购成功', '反馈可见'],
+  },
+];
 
 afterEach(() => {
   cleanup();
@@ -57,6 +77,7 @@ describe('ExecutionStep sequential playback', () => {
     render(
       <ExecutionStep
         executions={executionCases}
+        taskCatalog={taskCatalog}
         selectedCaseId="run-1-case-001"
         qaHistory={emptyHistory}
         onSelectCase={vi.fn()}
@@ -101,6 +122,7 @@ describe('ExecutionStep sequential playback', () => {
     render(
       <ExecutionStep
         executions={executionCases}
+        taskCatalog={taskCatalog}
         selectedCaseId="run-1-case-001"
         qaHistory={emptyHistory}
         onSelectCase={vi.fn()}
@@ -133,6 +155,7 @@ describe('ExecutionStep sequential playback', () => {
     render(
       <ExecutionStep
         executions={executionCases}
+        taskCatalog={taskCatalog}
         selectedCaseId="run-1-case-001"
         qaHistory={emptyHistory}
         onSelectCase={vi.fn()}

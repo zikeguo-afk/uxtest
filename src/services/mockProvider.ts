@@ -10,6 +10,7 @@ import type {
   AgentCategorySelection,
   AgentEmotion,
   CategoryReportItem,
+  ExecutionJobProgress,
   ExecutionCaseRef,
   ExecutionRequest,
   ExecutionStep,
@@ -40,6 +41,15 @@ let lastExecutionContext: LastExecutionContext = {
   generatedAgents: [],
   latestSnapshot: null,
 };
+const mockExecutionJobs = new Map<
+  string,
+  {
+    runId: string;
+    progress: ExecutionJobProgress;
+    snapshot: TestRunSnapshot | null;
+    error: string | null;
+  }
+>();
 
 function clone<T>(value: T): T {
   if (typeof globalThis.structuredClone === 'function') {
@@ -87,10 +97,6 @@ function sanitizeCategorySelections(
       count: clamp(Math.floor(selection.count), 0, 20),
     }))
     .filter((selection) => selection.count > 0 && categoryMap.has(selection.categoryId));
-}
-
-function sanitizeTaskIds(taskIds: number[]): number[] {
-  return Array.from(new Set(taskIds.filter((taskId) => taskMap.has(taskId))));
 }
 
 function emotionSeverity(emotionPeak: string): number {
@@ -148,12 +154,11 @@ function resolveCaseId(execution: TaskExecution, index: number): string {
 }
 
 function createExecution(
-  taskId: number,
+  task: { id: number; name: string },
   agent: GeneratedAgentPersona,
   caseId: string,
 ): TaskExecution {
-  const task = taskMap.get(taskId)!;
-  const template = executionTemplates[taskId] ?? fallbackExecutionTemplate;
+  const template = executionTemplates[task.id] ?? fallbackExecutionTemplate;
   const capability =
     agent.traits.techSavvy * 0.45 +
     agent.traits.attention * 0.35 +
@@ -414,7 +419,17 @@ function buildRecommendations(metrics: QuantitativeMetric[], categorySummary: Ca
 function buildSnapshot(request: ExecutionRequest): TestRunSnapshot {
   const runId = buildRunId();
   const targetUrl = request.targetUrl?.trim() || undefined;
-  const selectedTaskIds = sanitizeTaskIds(request.selectedTaskIds);
+  const requestTaskCatalog = (request.taskCatalog ?? []).map((task) => ({
+    ...task,
+    selected: false,
+  }));
+  const availableTaskMap =
+    requestTaskCatalog.length > 0
+      ? new Map(requestTaskCatalog.map((task) => [task.id, task]))
+      : taskMap;
+  const selectedTaskIds = Array.from(
+    new Set(request.selectedTaskIds.filter((taskId) => availableTaskMap.has(taskId))),
+  );
   const categorySelections = sanitizeCategorySelections(request.categorySelections);
   const createdAt = new Date().toISOString();
 
@@ -424,6 +439,10 @@ function buildSnapshot(request: ExecutionRequest): TestRunSnapshot {
       createdAt,
       targetUrl,
       selectedTaskIds,
+      taskCatalog: selectedTaskIds
+        .map((taskId) => availableTaskMap.get(taskId))
+        .filter((task): task is typeof requestTaskCatalog[number] => Boolean(task))
+        .map((task) => ({ ...task })),
       categorySelections,
       generatedAgents: [],
       executions: [],
@@ -452,10 +471,14 @@ function buildSnapshot(request: ExecutionRequest): TestRunSnapshot {
   const executions = sampledPairs
     .map((pair, index) => {
       const agent = agentMap.get(pair.generatedAgentId);
+      const task = availableTaskMap.get(pair.taskId);
       if (!agent) {
         return null;
       }
-      return createExecution(pair.taskId, agent, `${runId}-case-${String(index + 1).padStart(3, '0')}`);
+      if (!task) {
+        return null;
+      }
+      return createExecution(task, agent, `${runId}-case-${String(index + 1).padStart(3, '0')}`);
     })
     .filter((item): item is TaskExecution => item !== null);
 
@@ -464,6 +487,10 @@ function buildSnapshot(request: ExecutionRequest): TestRunSnapshot {
     createdAt,
     targetUrl,
     selectedTaskIds,
+    taskCatalog: selectedTaskIds
+      .map((taskId) => availableTaskMap.get(taskId))
+      .filter((task): task is typeof requestTaskCatalog[number] => Boolean(task))
+      .map((task) => ({ ...task })),
     categorySelections,
     generatedAgents,
     executions,
@@ -681,11 +708,85 @@ export const mockProvider: UXAgentProvider = {
     } as const;
   },
   createRunSnapshot(request: ExecutionRequest) {
-    return clone(buildSnapshot(request));
+    const snapshot = buildSnapshot(request);
+    lastExecutionContext = {
+      ...lastExecutionContext,
+      latestSnapshot: snapshot,
+    };
+    return clone(snapshot);
   },
   getExecutions(request: ExecutionRequest) {
     const snapshot = buildSnapshot(request);
+    lastExecutionContext = {
+      ...lastExecutionContext,
+      latestSnapshot: snapshot,
+    };
     return clone(snapshot.executions);
+  },
+  startExecutionJob(runId: string) {
+    const snapshot = lastExecutionContext.latestSnapshot;
+    const jobId = `mock-job-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const executions = snapshot?.runId === runId ? snapshot.executions : [];
+    const progress: ExecutionJobProgress = {
+      jobId,
+      runId,
+      status: 'completed',
+      totalCases: executions.length,
+      finishedCases: executions.length,
+      currentCaseId: null,
+      cases: (snapshot?.caseRefs ?? []).map((item) => ({
+        caseId: item.caseId,
+        taskId: item.taskId,
+        taskName: item.taskName,
+        agentId: item.agentId,
+        agentName: item.agentName,
+        status: item.status,
+        stepCount:
+          snapshot?.executions.find((execution) => execution.caseId === item.caseId)?.steps.length ?? 0,
+        lastStepPreview:
+          snapshot?.executions
+            .find((execution) => execution.caseId === item.caseId)
+            ?.steps.slice(-1)[0]?.content ?? '',
+      })),
+      message: 'mock 执行已完成',
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockExecutionJobs.set(jobId, {
+      runId,
+      progress,
+      snapshot: snapshot?.runId === runId ? snapshot : null,
+      error: null,
+    });
+    return { jobId };
+  },
+  getExecutionJobStatus(runId: string, jobId: string) {
+    const job = mockExecutionJobs.get(jobId);
+    if (!job || job.runId !== runId) {
+      return {
+        status: 'failed' as const,
+        progress: {
+          jobId,
+          runId,
+          status: 'failed',
+          totalCases: 0,
+          finishedCases: 0,
+          currentCaseId: null,
+          cases: [],
+          message: 'mock job 不存在',
+          updatedAt: new Date().toISOString(),
+        },
+        snapshot: null,
+        error: 'mock job 不存在',
+      };
+    }
+
+    return {
+      status: job.progress.status,
+      progress: clone(job.progress),
+      snapshot: clone(job.snapshot),
+      error: job.error,
+    };
   },
   askQuestion(request: QARequest, snapshot: TestRunSnapshot) {
     if (request.runId !== snapshot.runId) {

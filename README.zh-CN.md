@@ -29,6 +29,7 @@ npm run dev -- --host 0.0.0.0 --port 5173
 终端 1：
 
 ```bash
+npm run server:install-browser
 npm run server:dev
 ```
 
@@ -99,6 +100,7 @@ npm run check
   - `inference`（推断）回答润色。
 - 大模型不得生成或改写证据编号（`caseId/taskId/step`）。
 - 基础检查：`GET /api/v1/llm/healthz`
+- 执行链路 LLM 检查：`GET /api/v1/llm/execution-healthz`
 - 外部连通性探测：`GET /api/v1/llm/healthz?probe=1`
 
 ## 环境变量
@@ -114,15 +116,34 @@ npm run check
 - `RUN_TTL_MS=7200000`
 - `RUN_CACHE_SIZE=200`
 - `RUN_CLEANUP_INTERVAL_MS=600000`
+- `EXECUTION_JOB_TTL_MS=7200000`
+- `EXECUTION_JOB_CACHE_SIZE=200`
+- `EXECUTION_JOB_CLEANUP_INTERVAL_MS=600000`
 - `EVALUATION_MODE=auto`
 - `EVALUATOR_TIMEOUT_MS=30000`
 - `EVALUATOR_ALLOW_INSECURE_TLS=true`
+- `LIVE_RUNNER_ENABLED=true`
+- `PLAYWRIGHT_HEADLESS=true`
+- `PLAYWRIGHT_CONCURRENCY=2`
+- `CASE_MAX_STEPS=12`
+- `CASE_TIMEOUT_MS=90000`
+- `STEP_TIMEOUT_MS=10000`
+- `LIVE_RUNNER_SCREENSHOT_ENABLED=true`
+- `LIVE_RUNNER_ARTIFACT_DIR=server/.artifacts/live-runs`
 - `LLM_PROVIDER=mock|openai-compatible`
 - `LLM_API_BASE_URL=https://api.openai.com/v1`
 - `LLM_API_KEY=...`
 - `LLM_MODEL=gpt-4o-mini`
 - `LLM_TIMEOUT_MS=20000`
 - `LLM_TEMPERATURE=0.2`
+- `LLM_EXEC_PROVIDER=inherit|mock|openai-compatible`（执行链路专用，`inherit` 表示复用主 LLM）
+- `LLM_EXEC_API_BASE_URL=...`
+- `LLM_EXEC_API_KEY=...`
+- `LLM_EXEC_MODEL=...`
+- `LLM_EXEC_TIMEOUT_MS=20000`
+- `LLM_EXEC_TEMPERATURE=0.2`
+- `LLM_EXEC_STAGE_RETRY_COUNT=2`
+- `LLM_EXEC_JSON_REPAIR_COUNT=1`
 - `LLM_STAGE_RETRY_COUNT=2`
 - `LLM_JSON_REPAIR_COUNT=1`
 - `LLM_CHUNK_TOKEN_BUDGET=1600`

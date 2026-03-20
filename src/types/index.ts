@@ -42,6 +42,12 @@ export interface Task {
   evidenceReason?: string;
 }
 
+export interface TaskDetailValidationIssue {
+  taskId: number;
+  taskName: string;
+  reasons: string[];
+}
+
 export interface DiagnosisItem {
   dimension: string;
   status: 'success' | 'warning' | 'error';
@@ -123,12 +129,48 @@ export interface GeneratedAgentPersona {
   emotionalBase: string[];
   goal: string;
   traits: TraitProfile;
+  behaviorBias?: string;
+  languageStyle?: string;
+  frictionSensitivity?: number;
+}
+
+export type LiveExecutionActionType =
+  | 'click'
+  | 'type'
+  | 'select'
+  | 'wait'
+  | 'scroll'
+  | 'assert'
+  | 'finish'
+  | 'fail';
+
+export interface LiveExecutionAction {
+  type: LiveExecutionActionType;
+  selector?: string;
+  text?: string;
+  optionValue?: string;
+  waitMs?: number;
+  direction?: 'up' | 'down';
+  expected?: string;
+  reason?: string;
+}
+
+export interface LiveExecutionStepEvidence {
+  urlBefore: string;
+  urlAfter: string;
+  domExcerpt: string;
+  screenshotPath?: string;
 }
 
 export interface ExecutionStep {
   step: number;
   role: 'observer' | 'decider' | 'executor' | 'feedback';
   content: string;
+  plannedStep?: string;
+  actualAction?: LiveExecutionAction;
+  observation?: string;
+  result?: 'success' | 'failed' | 'skipped';
+  evidence?: LiveExecutionStepEvidence;
   emotion?: AgentEmotion;
   emotionValue?: number;
 }
@@ -219,12 +261,40 @@ export interface TestRunSnapshot {
   runId: string;
   createdAt: string;
   targetUrl?: string;
+  runnerMode?: 'simulated' | 'live-browser';
+  personaVersion?: string;
   selectedTaskIds: number[];
   taskCatalog?: Task[];
   categorySelections: AgentCategorySelection[];
   generatedAgents: GeneratedAgentPersona[];
   executions: TaskExecution[];
   caseRefs: ExecutionCaseRef[];
+}
+
+export type ExecutionJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export interface LiveExecutionCaseState {
+  caseId: string;
+  taskId: number;
+  taskName: string;
+  agentId: string;
+  agentName: string;
+  status: TaskStatus | 'queued';
+  stepCount: number;
+  lastStepPreview?: string;
+  error?: string;
+}
+
+export interface ExecutionJobProgress {
+  jobId: string;
+  runId: string;
+  status: ExecutionJobStatus;
+  totalCases: number;
+  finishedCases: number;
+  currentCaseId: string | null;
+  cases: LiveExecutionCaseState[];
+  message: string;
+  updatedAt: string;
 }
 
 export interface QAFilter {

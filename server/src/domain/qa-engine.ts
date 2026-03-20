@@ -105,7 +105,12 @@ function scoreExecution(execution: TaskExecution, question: string, tokens: stri
     execution.result,
     execution.bottleneck ?? '',
     execution.emotionPeak ?? '',
-    ...execution.steps.map((step) => step.content),
+    ...execution.steps.flatMap((step) => [
+      step.content,
+      step.plannedStep ?? '',
+      step.observation ?? '',
+      step.evidence?.domExcerpt ?? '',
+    ]),
   ];
 
   for (const field of searchableFields) {
@@ -123,16 +128,27 @@ function pickEvidenceForExecution(
   tokens: string[],
 ): QAEvidence {
   const matchedStep =
-    execution.steps.find((step) => includesAny(step.content, tokens)) ??
+    execution.steps.find((step) =>
+      includesAny(
+        [step.content, step.plannedStep ?? '', step.observation ?? '', step.evidence?.domExcerpt ?? ''].join(' '),
+        tokens,
+      ),
+    ) ??
     execution.steps.find((step) => step.emotion !== undefined) ??
     execution.steps[execution.steps.length - 1];
+  const excerpt = matchedStep
+    ? matchedStep.observation?.trim() ||
+      matchedStep.content ||
+      matchedStep.evidence?.domExcerpt?.slice(0, 160) ||
+      execution.result
+    : execution.result;
 
   return {
     caseId: resolveCaseId(execution, index),
     taskId: execution.taskId,
     taskName: execution.taskName,
     step: matchedStep?.step ?? 1,
-    excerpt: matchedStep?.content ?? execution.result,
+    excerpt,
   };
 }
 

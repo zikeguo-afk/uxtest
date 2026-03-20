@@ -3,6 +3,7 @@ import type { LLMAdapter, LLMHealthReport } from '../llm/adapter';
 
 interface HealthRouteOptions {
   llmAdapter: LLMAdapter;
+  executionLlmAdapter?: LLMAdapter;
 }
 
 function normalizeProbe(raw: unknown): boolean {
@@ -25,7 +26,12 @@ function buildFallbackHealth(llmAdapter: LLMAdapter): LLMHealthReport {
 }
 
 export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (app, options) => {
-  app.get('/healthz', async () => ({ ok: true, llmProvider: options.llmAdapter.kind }));
+  const executionAdapter = options.executionLlmAdapter ?? options.llmAdapter;
+  app.get('/healthz', async () => ({
+    ok: true,
+    llmProvider: options.llmAdapter.kind,
+    executionLlmProvider: executionAdapter.kind,
+  }));
 
   app.get('/llm/healthz', async (request) => {
     const query = request.query as { probe?: string };
@@ -40,7 +46,25 @@ export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (app, 
     return {
       ok,
       probe,
+      scope: 'diagnosis',
       responsibilities: options.llmAdapter.getResponsibilities(),
+      ...report,
+    };
+  });
+
+  app.get('/llm/execution-healthz', async (request) => {
+    const query = request.query as { probe?: string };
+    const probe = normalizeProbe(query?.probe);
+    const report = executionAdapter.healthCheck
+      ? await executionAdapter.healthCheck(probe)
+      : buildFallbackHealth(executionAdapter);
+    const ok = probe ? report.reachable : report.configured;
+
+    return {
+      ok,
+      probe,
+      scope: 'execution',
+      responsibilities: executionAdapter.getResponsibilities(),
       ...report,
     };
   });

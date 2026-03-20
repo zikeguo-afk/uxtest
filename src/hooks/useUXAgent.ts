@@ -40,6 +40,20 @@ const MAX_EXECUTION_CASES = (() => {
   }
   return Math.min(Math.floor(rawValue), 40);
 })();
+const EXECUTION_JOB_POLL_INTERVAL_MS = (() => {
+  const raw = Number(import.meta.env.VITE_EXECUTION_POLL_INTERVAL_MS ?? 800);
+  if (!Number.isFinite(raw) || raw < 300) {
+    return 800;
+  }
+  return Math.floor(raw);
+})();
+const EXECUTION_JOB_TIMEOUT_MS = (() => {
+  const raw = Number(import.meta.env.VITE_EXECUTION_TIMEOUT_MS ?? 30 * 60 * 1000);
+  if (!Number.isFinite(raw) || raw < 60_000) {
+    return 30 * 60 * 1000;
+  }
+  return Math.floor(raw);
+})();
 const DEFAULT_TARGET_URL =
   import.meta.env.VITE_DEFAULT_TARGET_URL ?? 'https://frbe2kpuvbfve.ok.kimi.link';
 
@@ -144,6 +158,42 @@ async function safeGetExecutions(
   } catch (error) {
     console.error('Provider getExecutions failed, falling back to mockProvider.', error);
     return mockProvider.getExecutions(request);
+  }
+}
+
+async function safeStartExecutionJob(
+  provider: UXAgentProvider,
+  runId: string,
+): Promise<{ jobId: string }> {
+  try {
+    return await provider.startExecutionJob(runId);
+  } catch (error) {
+    console.error('Provider startExecutionJob failed, falling back to mockProvider.', error);
+    return mockProvider.startExecutionJob(runId);
+  }
+}
+
+async function safeGetExecutionJobStatus(
+  provider: UXAgentProvider,
+  runId: string,
+  jobId: string,
+): Promise<{
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  progress: {
+    totalCases: number;
+    finishedCases: number;
+    currentCaseId: string | null;
+    message: string;
+    updatedAt: string;
+  };
+  snapshot: TestRunSnapshot | null;
+  error: string | null;
+}> {
+  try {
+    return await provider.getExecutionJobStatus(runId, jobId);
+  } catch (error) {
+    console.error('Provider getExecutionJobStatus failed, falling back to mockProvider.', error);
+    return mockProvider.getExecutionJobStatus(runId, jobId);
   }
 }
 
@@ -414,13 +464,52 @@ export function useUXAgent(provider: UXAgentProvider = resolveDefaultProvider())
     markRuntime('sampling');
     try {
       const snapshot = await safeCreateRunSnapshot(provider, request);
-      const nextExecutions =
-        snapshot.executions.length > 0 ? snapshot.executions : await safeGetExecutions(provider, request);
-
       setCurrentRunSnapshot(snapshot);
-      setExecutions(nextExecutions);
-      setGeneratedAgents(snapshot.generatedAgents.length > 0 ? snapshot.generatedAgents : extractGeneratedAgents(nextExecutions));
-      setSelectedCaseId(nextExecutions[0]?.caseId ?? null);
+      setExecutions(snapshot.executions);
+      setGeneratedAgents(snapshot.generatedAgents.length > 0 ? snapshot.generatedAgents : extractGeneratedAgents(snapshot.executions));
+      setSelectedCaseId(snapshot.executions[0]?.caseId ?? null);
+      setQAHistory([]);
+      setFinalReportBundle(null);
+
+      const { jobId } = await safeStartExecutionJob(provider, snapshot.runId);
+      const startedAt = Date.now();
+      let completedSnapshot: TestRunSnapshot | null = null;
+
+      while (Date.now() - startedAt <= EXECUTION_JOB_TIMEOUT_MS) {
+        await new Promise((resolve) => setTimeout(resolve, EXECUTION_JOB_POLL_INTERVAL_MS));
+        const status = await safeGetExecutionJobStatus(provider, snapshot.runId, jobId);
+        if (status.snapshot) {
+          completedSnapshot = status.snapshot;
+          setCurrentRunSnapshot(status.snapshot);
+          setExecutions(status.snapshot.executions);
+          setGeneratedAgents(
+            status.snapshot.generatedAgents.length > 0
+              ? status.snapshot.generatedAgents
+              : extractGeneratedAgents(status.snapshot.executions),
+          );
+          setSelectedCaseId((prev) => prev ?? status.snapshot?.executions[0]?.caseId ?? null);
+        }
+
+        if (status.status === 'completed') {
+          break;
+        }
+        if (status.status === 'failed') {
+          throw new Error(status.error ?? status.progress.message ?? '执行任务失败，请重试');
+        }
+      }
+
+      if (!completedSnapshot) {
+        // Fallback for providers that don't expose progressive snapshot updates.
+        const nextExecutions = await safeGetExecutions(provider, request);
+        setExecutions(nextExecutions);
+        setGeneratedAgents(extractGeneratedAgents(nextExecutions));
+        setSelectedCaseId(nextExecutions[0]?.caseId ?? null);
+      }
+
+      if (Date.now() - startedAt > EXECUTION_JOB_TIMEOUT_MS) {
+        throw new Error('执行任务超时，请稍后重试');
+      }
+
       setQAHistory([]);
       setFinalReportBundle(null);
       markRuntime('idle');

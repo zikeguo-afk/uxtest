@@ -2,6 +2,7 @@ import type {
   AnalysisProgressStatus,
   CategoryReportItem,
   DiagnosisItem,
+  ExecutionJobProgress,
   TaskGenerationStatus,
   ExecutionRequest,
   QARequest,
@@ -38,6 +39,13 @@ export interface UXAgentReport {
 export interface UXAgentProvider {
   getDiagnosis(targetUrl: string, options?: DiagnosisRequestOptions): MaybePromise<DiagnosisResult>;
   getExecutions(request: ExecutionRequest): MaybePromise<TaskExecution[]>;
+  startExecutionJob(runId: string): MaybePromise<{ jobId: string }>;
+  getExecutionJobStatus(runId: string, jobId: string): MaybePromise<{
+    status: ExecutionJobProgress['status'];
+    progress: ExecutionJobProgress;
+    snapshot: TestRunSnapshot | null;
+    error: string | null;
+  }>;
   getReport(executions: TaskExecution[]): MaybePromise<UXAgentReport>;
   createRunSnapshot(request: ExecutionRequest): MaybePromise<TestRunSnapshot>;
   askQuestion(request: QARequest, snapshot: TestRunSnapshot): MaybePromise<QAResponse>;
